@@ -289,9 +289,9 @@ def function_calling(query, model):
         best_model_name = max(model_scores.items(), key=lambda x: x[1]["r2"])[0]
         model_path = Path(EXPORT_DIR + f'/models/{best_model_name}.joblib')
         model = joblib.load(model_path)
-        X_test = pd.DataFrame({"make": [make], "color": [color], "odometer": [odometer], "doors": [doors]})
-        y_pred = str(model.predict(X_test)[0])
-        return y_pred
+        X_test = pd.DataFrame({"Make": [make], "Colour": [color], "Odometer (KM)": [odometer], "Doors": [float(doors)]})
+        y_pred = str(int(round(model.predict(X_test)[0])))
+        return f"The predicted price is {y_pred} dollars"
            
     tools = [
         {
@@ -364,7 +364,7 @@ def function_calling(query, model):
     for attempt in range(1,4):
         try:
             print('api ollama call')
-            messages = [{"role": "system", "content": "Tu es un assistant expert. Chaque fois que tu reçois les résultats d’une fonction (message avec role 'tool'), tu dois impérativement les utiliser et les citer explicitement dans ta réponse finale à l'utilisateur. Ne génère pas de réponse sans intégrer ces données."}, 
+            messages = [{"role": "system", "content": "Tu es un assistant expert. Utilise uniquement la sortie des fonctions tools pour répondre."}, 
                         {"role": "user", "content": query}]
             data =  {
                     "model": model,
@@ -416,7 +416,7 @@ def function_calling(query, model):
             print("===============\n", context)
             return response, context, mails
         except Exception as e:
-            print(f"Mistral API call failed with error: {e}")
+            print(f"Ollama call failed with error: {e}")
     return response, context, mails
      
 

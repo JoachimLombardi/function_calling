@@ -7,6 +7,7 @@ class FunctionCallingForm(forms.Form):
     ("mistral", "mistral"),
     ("mistral-small3.1", "mistral small"),
     ("llama3.2", "llama 3.2"),
+    ("gpt-oss", "gpt oss")
     ]
     query = forms.CharField(label="Poser une question", widget=forms.TextInput(attrs={'class': 'form-control'}))
     llm_choice = forms.ChoiceField(choices=LLM_CHOICE, label="Choisissez un llm", 
