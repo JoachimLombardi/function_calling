@@ -1,0 +1,558 @@
+import base64
+import functools
+import json
+import os
+from pathlib import Path
+import re
+from ollama import chat
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
+from googleapiclient.discovery import build
+from google.auth.transport.requests import Request
+from bs4 import BeautifulSoup
+import requests
+import fitz
+from PIL import Image
+from ask_document.config import EXPORT_DIR
+import pandas as pd
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
+from sklearn.impute import SimpleImputer
+from sklearn.preprocessing import OneHotEncoder
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn.linear_model import Ridge, Lasso, SGDRegressor
+from sklearn.tree import DecisionTreeRegressor
+from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error, root_mean_squared_error
+import joblib
+import numpy as np
+
+
+def image_questioning_llm(llm_choice, query, path="data/jpg/image.jpg"):
+    response = chat(
+    model=llm_choice,
+    messages=[
+        {
+        'role': 'user',
+        'content': query,
+        'images': [path],
+        }
+    ],
+    )
+    return response["message"]["content"]
+
+
+def function_calling(query, model):
+
+    def get_message_body(payload):
+        if 'parts' in payload:
+            for part in payload['parts']:
+                mime_type = part.get('mimeType')
+                body_data = part.get('body', {}).get('data')
+                if body_data:
+                    try:
+                        decoded_data = base64.urlsafe_b64decode(body_data).decode('utf-8')
+                        if mime_type == 'text/html':
+                            # Extraire le texte brut du HTML
+                            soup = BeautifulSoup(decoded_data, 'html.parser')
+                            return soup.get_text(separator='\n').strip()
+                        else:
+                            return decoded_data
+                    except Exception:
+                        continue
+        else:
+            body_data = payload.get('body', {}).get('data')
+            if body_data:
+                decoded_data = base64.urlsafe_b64decode(body_data).decode('utf-8')
+                # Ici aussi, possibilité de vérifier le type si tu veux
+                soup = BeautifulSoup(decoded_data, 'html.parser')
+                return soup.get_text(separator='\n').strip()
+        return "(pas de contenu lisible)"
+
+
+    def google_mail(number_of_mails=5):
+        SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
+
+        creds = None
+        if os.path.exists('token.json'):
+            creds = Credentials.from_authorized_user_file('token.json', SCOPES)
+
+        if not creds or not creds.valid:
+            if creds and creds.expired and creds.refresh_token:
+                creds.refresh(Request())
+            else:
+                flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
+                creds = flow.run_local_server(port=0)
+            with open('token.json', 'w') as token:
+                token.write(creds.to_json())
+
+        service = build('gmail', 'v1', credentials=creds)
+
+        try:
+            results = service.users().messages().list(userId='me', maxResults=number_of_mails, labelIds=['CATEGORY_PERSONAL']).execute()
+            messages = results.get('messages', [])
+            liste_messages = []
+            liste_mails = []
+            liste_general = []
+            for i, msg in enumerate(messages):
+                msg_id = msg['id']
+                message = service.users().messages().get(userId='me', id=msg_id, format='full').execute()
+                headers = message.get('payload', {}).get('headers', [])
+                subject = next((h['value'] for h in headers if h['name'] == 'Subject'), '(sans sujet)')
+                sender = next((h['value'] for h in headers if h['name'] == 'From'), '(expéditeur inconnu)')
+                content = get_message_body(message.get('payload', {}))
+                liste_messages.append(f"Mail {i+1}:\nExpéditeur: {sender}\nSujet: {subject}\nContenu: {content}")
+                message_dict = {
+                    'sender': sender,
+                    'subject': subject,
+                    'content': content
+                }
+                liste_mails.append(message_dict)
+            tot_mails = "\n".join(liste_messages)
+            liste_general.append(tot_mails)
+            liste_general.append(liste_mails)
+
+              
+            return liste_general
+
+        except Exception as e:
+            print(f"Une erreur s'est produite : {str(e)}")
+            return []
+
+    data = pd.read_csv("data/csv/car-sales-extended-missing-data.csv")
+
+    def create_best_model(data):  
+        np.random.seed(42)
+
+        try:
+            data.dropna(subset=["Price"], inplace=True)
+        except:
+            raise ValueError("La colonne Price est absente des données.")
+             
+        # Split data
+        X = data.drop("Price", axis=1)
+        y = data["Price"]
+        X_train, X_valid, y_train, y_valid = train_test_split(X, y, test_size=0.2)
+
+        # Define differents features and transformer pipeline
+        categorical_features = ["Make", "Colour"]
+        categorical_transformer = Pipeline(steps=[
+            ("imputer", SimpleImputer(strategy="constant", fill_value="missing")), # Imputer fills missing data.
+            ("onehot", OneHotEncoder(handle_unknown="ignore"))]) # OneHotEncoder convert data to numbers.
+        door_features = ["Doors"]
+        door_transformer =  Pipeline(steps=[
+            ("imputer", SimpleImputer(strategy="constant", fill_value=4))])
+        numerical_features = ["Odometer (KM)"]
+        numerical_transformers = Pipeline(steps=[
+            ("imputer", SimpleImputer(strategy="mean"))])
+
+        # Setup preprocessing steps (fill missing values, then convert to numbers)
+        preprocessor = ColumnTransformer(
+                            transformers=[
+                                ("cat", categorical_transformer, categorical_features),
+                                ("door", door_transformer, door_features),
+                                ("num", numerical_transformers, numerical_features)
+                            ])
+        ridge_grid = {
+        "solver": ["auto"],
+        "max_iter": [1000],
+        "alpha": [0.1],
+        }
+
+        lasso_grid = {
+        "max_iter": [1000],
+        }
+
+
+        rf_reg_grid = {
+        "n_estimators": [100, 400],
+        "min_samples_split": [2],
+        "min_samples_leaf": [1, 5],
+        }
+
+
+        SGD_reg_grid = {
+        "loss": ["squared_error"],
+        "max_iter": list(range(100, 200)),
+        "penalty": ["elasticnet"],
+        "tol": [1e-3]
+        }
+        
+        DTR_grid = {
+        "splitter": ["best", "random"],
+        "max_depth": list(range(2, 10, 5)),
+        "max_leaf_nodes": [10]
+        }
+
+        models_reg = {
+        "Random Forest Regressor": RandomForestRegressor(random_state=1, n_jobs=-1),
+        "Ridge Regression": Ridge(),
+        "Lasso Regression": Lasso(),
+        "SGD Regressor": SGDRegressor(random_state=1),
+        "Decision Tree Regressor": DecisionTreeRegressor(random_state=1)
+        }
+
+        grids = {
+        "Random Forest Regressor": rf_reg_grid,
+        "Ridge Regression": ridge_grid,
+        "Lasso Regression": lasso_grid,
+        "SGD Regressor": SGD_reg_grid,
+        "Decision Tree Regressor": DTR_grid
+        }
+
+        scoring = {
+        'r2': 'r2',
+        'neg_mean_squared_error': 'neg_mean_squared_error',
+        'neg_mean_absolute_error': 'neg_mean_absolute_error',
+        'neg_root_mean_squared_error': 'neg_root_mean_squared_error'
+        }
+
+
+
+        model_scores = {}
+        model_best_params = {}
+        model_final_scores = {}
+        for name, model_reg in models_reg.items():
+            try:
+                # Create a preprocessing and modeling pipeline
+                model = Pipeline(steps=[("preprocessor", preprocessor),
+                                        ("model", model_reg)])
+                param_grid = {"model__" + key: val for key, val in grids[name].items()}
+                rs = GridSearchCV(model,
+                                param_grid=param_grid,
+                                scoring=scoring,
+                                refit="r2",
+                                cv=5,
+                                verbose=True)
+                try:
+                    rs.fit(X_train, y_train)
+                except Exception as e:
+                    print(f"Erreur lors de l'entrainement du modèle {name}: {e}")
+                model_best_params[name] = rs.best_params_
+                model_scores[name] = {
+                "r2": rs.cv_results_["mean_test_r2"][rs.best_index_],
+                "neg_mean_squared_error": rs.cv_results_["mean_test_neg_mean_squared_error"][rs.best_index_],
+                "neg_mean_absolute_error": rs.cv_results_["mean_test_neg_mean_absolute_error"][rs.best_index_],
+                "neg_root_mean_squared_error": rs.cv_results_["mean_test_neg_root_mean_squared_error"][rs.best_index_]
+                }
+                #rs.cv_results_
+                model_with_best_params = rs.best_estimator_  # modèle entraîné avec meilleurs paramètres
+
+                # Prédictions sur le jeu de test
+                y_pred = model_with_best_params.predict(X_valid)
+
+                # Calcul des métriques
+                r2 = r2_score(y_valid, y_pred)
+                mse = mean_squared_error(y_valid, y_pred)
+                rmse = root_mean_squared_error(y_valid, y_pred)
+                mae = mean_absolute_error(y_valid, y_pred)
+
+                model_final_scores[name] = {
+                    "r2": r2,
+                    "mse": mse,
+                    "rmse": rmse,
+                    "mae": mae
+                }
+                if model_with_best_params:
+                    # Sauvegarder le modèle avec les meilleurs paramètres
+                    model_path = Path(EXPORT_DIR + f'/models/{name}.joblib')
+                    joblib.dump(model_with_best_params, model_path)
+            except Exception as e:
+                print(f"Erreur avec le modèle {name}: {e}")
+                model_scores = None
+                model_best_params = None
+                model_final_scores = None
+        if model_scores:
+            model_scores = dict(sorted(model_scores.items(), key=lambda item: item[1]['r2'], reverse=True))
+            best_model = max(model_scores.items(), key=lambda x: x[1]["r2"])
+            best_model_name = best_model[0]
+            model_with_best_params_scores = Path(EXPORT_DIR + '/json/model_with_best_params_scores.json')
+            with open(model_with_best_params_scores, 'w') as f:
+                json.dump(model_scores, f)
+        if model_best_params:
+            best_model_params = Path(EXPORT_DIR + f'/json/best_model_params.json')
+            with open(best_model_params, 'w') as f:
+                json.dump(model_best_params, f)
+        if model_final_scores:
+            model_final_scores = dict(sorted(model_final_scores.items(), key=lambda item: item[1]['r2'], reverse=True))
+            best_model_final = max(model_final_scores.items(), key=lambda x: x[1]["r2"])
+            best_model_name_final = best_model_final[0]
+            model_with_best_params_final_scores = Path(EXPORT_DIR + '/json/model_with_best_params_final_scores.json')
+            with open(model_with_best_params_final_scores, 'w') as f:
+                json.dump(model_final_scores, f)
+        return f"Best model with best params on train and test set: {best_model_name}, Best model with best params on validation set: {best_model_name_final}"
+
+
+    def make_predictions(make, color, odometer, doors): 
+        with open(EXPORT_DIR + '/json/model_with_best_params_scores.json') as f:
+            model_scores = json.load(f)
+        best_model_name = max(model_scores.items(), key=lambda x: x[1]["r2"])[0]
+        model_path = Path(EXPORT_DIR + f'/models/{best_model_name}.joblib')
+        model = joblib.load(model_path)
+        X_test = pd.DataFrame({"make": [make], "color": [color], "odometer": [odometer], "doors": [doors]})
+        y_pred = str(model.predict(X_test)[0])
+        return y_pred
+           
+    tools = [
+        {
+            "type": "function",
+            "function":{
+            "name": "google_mail",
+            "description": "Gets mails from your Gmail account",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "number_of_mails": {
+                        "type": "integer",
+                        "description": "The number of mails to get",
+                        }
+                    },
+                "required": []
+                }
+            }
+        },
+
+        {
+            "type": "function",
+            "function":{
+            "name": "create_best_model",
+            "description": "Train and test models with various parameters to determine the best model",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": []
+                }
+            }
+        },
+
+        {
+            "type": "function",
+            "function":{
+            "name": "make_predictions",
+            "description": "Predict the price of a car based on its make, color, odometer and number of doors",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "make": {
+                        "type": "string",
+                        "description": "The make of the car",
+                        },
+                    "color": {
+                        "type": "string",
+                        "description": "The color of the car",
+                        },
+                    "odometer": {
+                        "type": "integer",
+                        "description": "The odometer of the car",
+                        },
+                    "doors": {
+                        "type": "integer",
+                        "description": "The number of doors of the car",
+                        }
+                    },
+                "required": ["make", "color", "odometer", "doors"]
+                }
+            }
+        }
+    ]
+
+    names_to_functions = {
+        "google_mail": functools.partial(google_mail),
+        "create_best_model": functools.partial(create_best_model, data),
+        "make_predictions": functools.partial(make_predictions)
+    }
+    for attempt in range(1,4):
+        try:
+            print('api ollama call')
+            messages = [{"role": "system", "content": "Tu es un assistant expert. Chaque fois que tu reçois les résultats d’une fonction (message avec role 'tool'), tu dois impérativement les utiliser et les citer explicitement dans ta réponse finale à l'utilisateur. Ne génère pas de réponse sans intégrer ces données."}, 
+                        {"role": "user", "content": query}]
+            data =  {
+                    "model": model,
+                    "messages": messages,
+                    "tools": tools,
+                    "stream": False,
+                    "echo": False,
+                    "max_tokens": 5000,
+                    "temperature": 0,
+                    "top_p": 1e-6,
+                    "top_k": -1,
+                    "logprobs": None,
+                    "n": 1,
+                    "best_of": 1,
+                    "use_beam_search": False,
+                    "seed":42
+            }
+
+            response = requests.post('http://localhost:11434/api/chat', json=data).json()
+            print("response :", response)
+            messages.append(response["message"])
+            tool_call = response["message"]["tool_calls"][0]
+            function_name = tool_call["function"]["name"]
+            print("function_name: ", function_name)
+            try:
+                function_params = json.loads(tool_call["function"]["arguments"])
+            except:
+                function_params = tool_call["function"]["arguments"]
+            print("function_params: ", function_params)
+            function_result = names_to_functions[function_name](**function_params)
+            context = function_result
+            mails = []
+            if function_name == "google_mail":
+                mails = function_result[1]
+                function_result = function_result[0]
+            print("function_result: ", function_result)
+            if isinstance(function_result, dict):
+                function_result = json.dumps(function_result)
+            messages.append({"role": "tool", "name": function_name, "content": function_result})
+            print(messages)
+            data = {
+                "model": model,
+                "messages": messages,
+                "stream": False
+            }
+            print(type(data))
+            response = requests.post('http://localhost:11434/api/chat', json=data).json()
+            print("===============\n", response)
+            print("===============\n", context)
+            return response, context, mails
+        except Exception as e:
+            print(f"Mistral API call failed with error: {e}")
+    return response, context, mails
+     
+
+def reorder_text_pdf(_context_, file_write, list_path, model, query):
+    list_url = []
+    for path in list_path:
+        print(path)
+        try:
+            with open(path, "rb") as image_file:
+                base64_image = base64.b64encode(image_file.read()).decode("utf-8")
+        except FileNotFoundError:
+            print(f"Error: The file {path} was not found.")
+            return None
+        except Exception as e:  
+            print(f"Error: {e}")
+            return None
+        list_url.append(base64_image)
+    template = """Please proofread and correct the following French text for spelling, grammar, and formatting errors while preserving its original meaning. 
+    Ensure proper spacing between words, correct any misplaced line breaks, and maintain readability. Do not alter the style or tone of the original text. 
+    Ignore headers, footers, and any repetitive elements appearing on each page.
+    If necessary, make minor adjustments for clarity.
+
+    The following text corresponds to images. For each portion of the text, make sure to consider the image as a reference for context.
+
+    ## Output_format:
+    {
+        "text":string
+    }
+    """
+    for attempt in range(1,4):
+        try:
+            messages = [{"role":"user", "content": template, "images": []}]
+            data =  {
+                    "model": model,
+                    "messages": messages,
+                    "stream": False,
+                    "echo": False,
+                    "max_tokens": 5000,
+                    "temperature": 0,
+                    "top_p": 1e-6,
+                    "top_k": -1,
+                    "logprobs": None,
+                    "n": 1,
+                    "best_of": 1,
+                    "use_beam_search": False,
+                    "seed":42,
+            }
+            for part_text, image_url in zip(_context_, list_url):     
+                messages[0]["content"] += "\n\n" + part_text
+                messages[0]["images"].extend([image_url])
+            response = requests.post('http://localhost:11434/api/chat', json=data).json()
+            print("===============\n", response)
+            output = response["message"]["content"]
+            # print(output)
+            pattern = r'\{.+\}'
+            json_objects = re.findall(pattern, output, re.DOTALL)
+            try:
+                output = json_objects[0]
+            except:
+                pass
+            output = re.sub(r'\n\s+', '', output).replace("\\n", " ")
+            output = json.loads(output)
+            print("=================================================================\n", output)
+            with open(file_write, "w", encoding="utf-8") as f:
+                json.dump(output, f, ensure_ascii=False, indent=4)
+            template = """ You are a document reader, you will be given a text and a query. Your task is to answer the query based on the text.
+
+            ## Instructions:
+            1. Read the text and the query.
+            2. Answer the query based on the text.
+            3. Give the answer in a json format.
+            
+            ## Text:
+            '"""+output["text"]+"""'
+
+            ## Query:
+            '"""+query+"""'
+
+            ## Output_format:
+            {
+                "answer":string
+            }
+            """
+            messages = [{"role":"user", "content": template}]
+            data =  {
+                    "model": model,
+                    "messages": messages,
+                    "stream": False,
+                    "echo": False,
+                    "max_tokens": 5000,
+                    "temperature": 0,
+                    "top_p": 1e-6,
+                    "top_k": -1,
+                    "logprobs": None,
+                    "n": 1,
+                    "best_of": 1,
+                    "use_beam_search": False,
+                    "seed":42,
+            }
+            response = requests.post('http://localhost:11434/api/chat', json=data).json()
+            print("===============\n", response)
+            response = response["message"]["content"]
+            pattern = r'\{.+\}'
+            json_objects = re.findall(pattern, output, re.DOTALL)
+            try:
+                output = json_objects[0]
+            except:
+                pass
+            output = re.sub(r'\n\s+', '', output).replace("\\n", " ")
+            response = json.loads(output)
+            return response
+        except Exception as e:
+            print(f"Mistral API call failed with error: {e}")
+            print(f"Attempt {attempt} failed. Retrying...")
+
+
+def pdf_questioning_llm(model, query, path):
+    list_img_path = [path]
+    output_file = f"data/json/text.json"
+    doc = fitz.open(path)
+    text = [doc.load_page(page_index).get_text() for page_index in range(doc.page_count)]
+    list_img_path = []
+    for i, page_num in enumerate(range(len(doc))):
+        page = doc.load_page(page_num)
+        matrix = fitz.Matrix(2, 2) 
+        pix = page.get_pixmap(matrix=matrix)
+        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+        img_path = f"data/pdf/{os.path.basename(path).replace('.pdf', f'_{i}.jpg')}"
+        list_img_path.append(img_path)
+        img.save(img_path, "JPEG", quality=100)
+    doc.close()
+    try:
+        reorder_text_pdf(text, output_file, list_img_path, model, query)
+    except Exception as e:
+        return e
+
+
+
+

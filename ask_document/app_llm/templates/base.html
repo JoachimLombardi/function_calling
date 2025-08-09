@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>{% block title %}Interface des Articles{% endblock %}</title>
+    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+    <style>
+        .vertical-menu {
+            width: 130px;
+            position: fixed;
+            top: 0;
+            left: 0;
+            height: 100%;
+            background-color: #f8f9fa;
+            padding-top: 20px;
+        }
+        .vertical-menu a {
+            display: block;
+            padding: 10px;
+            text-decoration: none;
+            color: #333;
+        }
+        .vertical-menu a:hover {
+            background-color: #007bff;
+            color: white;
+        }
+        .vertical-menu .active {
+            background-color: #007bff;
+            color: white;
+        }
+        .content {
+            margin-left: 120px;
+            padding: 20px;
+        }
+        .user-status-bar {
+            margin-left: 130px;
+            padding: 10px;
+            background-color: #f1f1f1;
+            border-bottom: 1px solid #ddd;
+            position: relative;
+            z-index: 1; 
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .registration-form {
+            max-width: 600px; 
+            margin: auto; 
+            padding: 20px;
+            border: 1px solid #dee2e6; 
+            border-radius: 0.25rem; 
+            background-color: #f8f9fa; 
+        }
+    </style>
+</head>
+<body>
+
+    {% include "includes/menu.html" %}
+
+    <div class="content">
+        {% block content %}
+        {% endblock %}
+    </div>
+
+</body>
+</html>

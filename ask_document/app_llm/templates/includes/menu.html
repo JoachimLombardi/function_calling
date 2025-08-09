@@ -1,0 +1,6 @@
+<div class="vertical-menu">
+    <a href="{% url 'image_questioning' %}" class="{% if request.resolver_match.url_name == 'image questioning' %}active{% endif %}">Question sur les images</a>
+    <a href="{% url 'function_calling' %}" class="{% if request.resolver_match.url_name == 'function calling' %}active{% endif %}">Appel de fonction</a>
+    <a href="{% url 'pdf_questioning' %}" class="{% if request.resolver_match.url_name == 'pdf questioning' %}active{% endif %}">Question sur les PDF</a>
+
+</div>

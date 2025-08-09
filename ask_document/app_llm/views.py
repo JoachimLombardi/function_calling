@@ -1,0 +1,70 @@
+from django.conf import settings
+from django.shortcuts import render
+from .utils import save_file
+from .business_logic import function_calling, image_questioning_llm, pdf_questioning_llm
+from .forms import FunctionCallingForm, ImageUploadForm, PdfUploadForm
+from django.contrib import messages
+import markdown
+
+
+
+def image_questioning(request):
+    form = ImageUploadForm(request.POST or None, request.FILES)
+    if request.method == 'POST':
+        if form.is_valid():
+            image_file = form.cleaned_data['image']
+            save_path = 'data/jpg/image.jpg'
+            save_file(save_path, image_file)
+            query = form.cleaned_data['query']
+            llm_choice = form.cleaned_data['llm_choice']
+            image_url = settings.MEDIA_URL + save_path
+            try:
+                response = image_questioning_llm(llm_choice, query)
+                response = markdown.markdown(response)
+            except Exception as e:
+                messages.error(request, str(e))
+                response = ""
+            return render(request, 'image_questioning.html', {'form': form, 'response': response, 'image_url': image_url})
+        else:
+            messages.error(request, "Le formulaire n'est pas valide.")
+    return render(request, 'image_questioning.html', {'form': form})
+
+
+def llm_choice(request):
+    form = FunctionCallingForm(request.POST or None)
+    if request.method == 'POST':
+        if form.is_valid():
+            query = form.cleaned_data.get('query')
+            llm_choice = form.cleaned_data.get('llm_choice')
+            response, context, mails = function_calling(query, llm_choice)
+            if "error" in response:
+                messages.error(request, response["error"])
+                response = ""
+            response = response["message"]["content"]
+            response = markdown.markdown(response, extensions=['markdown.extensions.fenced_code'])
+            return render(request, 'function_calling.html', {'form': form, 'response': response, 'context': context, 'mails': mails})
+        else:
+            messages.error(request, "Le formulaire est invalide.")
+    return render(request, 'function_calling.html', {'form': form})
+
+
+def pdf_questioning(request):
+    form = PdfUploadForm(request.POST or None, request.FILES)
+    if request.method == 'POST':
+        if form.is_valid():
+            image_file = form.cleaned_data['pdf']
+            save_path = 'data/pdf/text.pdf'
+            save_file(save_path, image_file)
+            query = form.cleaned_data['query']
+            llm_choice = form.cleaned_data['llm_choice']
+            pdf_url = settings.MEDIA_URL + save_path
+            try:
+                response = pdf_questioning_llm(llm_choice, query, save_path)
+                response = markdown.markdown(response)
+            except Exception as e:
+                messages.error(request, str(e))
+                response = ""
+            return render(request, 'pdf_questioning.html', {'form': form, 'response': response, 'pdf_url': pdf_url})
+        else:
+            messages.error(request, "Le formulaire n'est pas valide.")
+    return render(request, 'pdf_questioning.html', {'form': form})

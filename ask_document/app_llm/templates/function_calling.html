@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+
+{% block title %}
+    Function_calling
+{% endblock %}
+
+{% block content %}
+    {% if messages %}
+        <div>
+            {% for message in messages %}
+                <div class="alert
+                    {% if message.level == DEFAULT_MESSAGE_LEVELS.ERROR %}
+                        alert-danger
+                    {% elif message.level == DEFAULT_MESSAGE_LEVELS.SUCCESS %}
+                        alert-success
+                    {% elif message.level == DEFAULT_MESSAGE_LEVELS.WARNING %}
+                        alert-warning
+                    {% else %}
+                        alert-info
+                    {% endif %}
+                ">
+                    {{ message|safe }}
+                </div>
+            {% endfor %}
+        </div>
+    {% endif %}
+
+    <div class="container mt-5">
+        <h1 class="text-center mb-4">function calling</h1>
+
+        <form method="POST" action="{% url 'function_calling' %}" class="mb-4">
+            {% csrf_token %}
+            {{ form.as_p }}
+            <button type="submit" class="btn btn-primary">Envoyer</button>
+        </form>
+        {% if response %}
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h2 class="card-title">Réponse :</h2>
+                </div>
+                <div class="card-body">
+                    <p class="card-text">{{ response|safe }}</p>
+                </div>
+            </div>
+        {% endif %}  
+        {% if mails %}
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h2 class="card-title">Mails :</h2>
+                </div>
+                <div class="card-body">
+                    {% for message in mails %}
+                        <div class="mb-3 border p-3 rounded bg-light">
+                            <p><strong>De :</strong> {{ message.sender }}</p>
+                            <p><strong>Sujet :</strong> {{ message.subject }}</p>
+                            <p>{{ message.content |linebreaksbr|safe }}</p>
+                        </div>
+                    {% endfor %}
+                </div>
+            </div>
+        {% else %}
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h2 class="card-title">Contexte :</h2>
+                </div>
+                <div class="card-body">
+                    <p class="card-text">{{ context|safe }}</p>  <!-- To use HTML -->
+                </div>
+            </div>
+        {% endif %}
+    </div>
+
+{% endblock %}
