@@ -289,6 +289,17 @@ def function_calling(query, model):
         best_model_name = max(model_scores.items(), key=lambda x: x[1]["r2"])[0]
         model_path = Path(EXPORT_DIR + f'/models/{best_model_name}.joblib')
         model = joblib.load(model_path)
+        mapping = {
+        "roug": "red",
+        "vert": "green",
+        "bleu": "blue",
+        "noir": "black",
+        "blanc": "white",
+        }
+        for key in mapping:
+            if color.lower().startswith(key):
+                color = mapping.get(key)
+                break
         X_test = pd.DataFrame({"Make": [make], "Colour": [color], "Odometer (KM)": [odometer], "Doors": [float(doors)]})
         y_pred = str(int(round(model.predict(X_test)[0])))
         return f"The predicted price is {y_pred} dollars"
