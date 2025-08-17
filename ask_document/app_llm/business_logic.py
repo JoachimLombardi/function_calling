@@ -29,6 +29,17 @@ import numpy as np
 
 
 def image_questioning_llm(llm_choice, query, path="data/jpg/image.jpg"):
+    """
+    A function that uses the Ollama Chat API to ask a given query about an image.
+    
+    Args:
+        llm_choice (str): The model to use for the chat.
+        query (str): The question to ask about the image.
+        path (str, optional): The path to the image file. Defaults to "data/jpg/image.jpg".
+    
+    Returns:
+        str: The response from the chat API.
+    """
     response = chat(
     model=llm_choice,
     messages=[
@@ -43,8 +54,24 @@ def image_questioning_llm(llm_choice, query, path="data/jpg/image.jpg"):
 
 
 def function_calling(query, model):
-
+    """
+    This function is used to interact with the Ollama Chat API to ask questions about emails and car prices.
+    It takes in two parameters:
+    - query (str): The question to ask about the emails or car prices.
+    - model (str): The model to use for the chat.
+    
+    This function returns a tuple containing the response from the chat API, the context of the chat, and the list of emails.
+    """
     def get_message_body(payload):
+        """
+        Retrieves the message body from a given payload.
+        
+        Parameters:
+            payload (dict): The payload containing the message body.
+            
+        Returns:
+            str: The message body as plain text. If no readable content is found, returns "(pas de contenu lisible)".
+        """
         if 'parts' in payload:
             for part in payload['parts']:
                 mime_type = part.get('mimeType')
@@ -71,6 +98,15 @@ def function_calling(query, model):
 
 
     def google_mail(number_of_mails=5):
+        """
+        This function retrieves the most recent personal emails from the Gmail API and returns a list of dictionaries containing the sender, subject, and content of each email.
+        
+        Parameters:
+            number_of_mails (int, optional): The number of most recent emails to retrieve. Defaults to 5.
+            
+        Returns:
+            list: A list containing two elements. The first element is a string containing the sender, subject, and content of each email, separated by newlines. The second element is a list of dictionaries, where each dictionary contains the sender, subject, and content of an email.
+        """
         SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
 
         creds = None
@@ -87,7 +123,6 @@ def function_calling(query, model):
                 token.write(creds.to_json())
 
         service = build('gmail', 'v1', credentials=creds)
-
         try:
             results = service.users().messages().list(userId='me', maxResults=number_of_mails, labelIds=['CATEGORY_PERSONAL']).execute()
             messages = results.get('messages', [])
@@ -111,10 +146,7 @@ def function_calling(query, model):
             tot_mails = "\n".join(liste_messages)
             liste_general.append(tot_mails)
             liste_general.append(liste_mails)
-
-              
             return liste_general
-
         except Exception as e:
             print(f"Une erreur s'est produite : {str(e)}")
             return []
@@ -122,6 +154,16 @@ def function_calling(query, model):
     data = pd.read_csv("data/csv/car-sales-extended-missing-data.csv")
 
     def create_best_model(data):  
+        """
+        Create the best model based on the given data.
+
+        Parameters:
+            data (pandas.DataFrame): The data to create the model from.
+
+        Returns:
+            str: The name of the best model with the best parameters on both the train and test set,
+            and the name of the best model with the best parameters on the validation set.
+        """
         np.random.seed(42)
 
         try:
@@ -153,6 +195,7 @@ def function_calling(query, model):
                                 ("door", door_transformer, door_features),
                                 ("num", numerical_transformers, numerical_features)
                             ])
+        # Setup different models
         ridge_grid = {
         "solver": ["auto"],
         "max_iter": [1000],
@@ -262,6 +305,7 @@ def function_calling(query, model):
                 model_scores = None
                 model_best_params = None
                 model_final_scores = None
+        # Sauvegarder les scores et les meilleurs paramètres
         if model_scores:
             model_scores = dict(sorted(model_scores.items(), key=lambda item: item[1]['r2'], reverse=True))
             best_model = max(model_scores.items(), key=lambda x: x[1]["r2"])
@@ -284,11 +328,26 @@ def function_calling(query, model):
 
 
     def make_predictions(make, color, odometer, doors): 
+        """
+        Makes a prediction on the price of a car based on its make, color, odometer reading, and number of doors.
+        
+        Args:
+            make (str): The make of the car.
+            color (str): The color of the car.
+            odometer (float): The odometer reading of the car.
+            doors (int): The number of doors the car has.
+            
+        Returns:
+            str: The predicted price of the car in dollars.
+        """
+        # Load the best model
         with open(EXPORT_DIR + '/json/model_with_best_params_scores.json') as f:
             model_scores = json.load(f)
+        # Select the best model
         best_model_name = max(model_scores.items(), key=lambda x: x[1]["r2"])[0]
         model_path = Path(EXPORT_DIR + f'/models/{best_model_name}.joblib')
         model = joblib.load(model_path)
+        # Mapping colors
         mapping = {
         "roug": "red",
         "vert": "green",
@@ -300,10 +359,11 @@ def function_calling(query, model):
             if color.lower().startswith(key):
                 color = mapping.get(key)
                 break
+        # Make predictions
         X_test = pd.DataFrame({"Make": [make], "Colour": [color], "Odometer (KM)": [odometer], "Doors": [float(doors)]})
         y_pred = str(int(round(model.predict(X_test)[0])))
         return f"The predicted price is {y_pred} dollars"
-           
+    # List of tools
     tools = [
         {
             "type": "function",
@@ -366,12 +426,13 @@ def function_calling(query, model):
             }
         }
     ]
-
+    # Dictionary of functions
     names_to_functions = {
         "google_mail": functools.partial(google_mail),
         "create_best_model": functools.partial(create_best_model, data),
         "make_predictions": functools.partial(make_predictions)
     }
+    # Function calling
     for attempt in range(1,4):
         try:
             print('api ollama call')
@@ -393,18 +454,20 @@ def function_calling(query, model):
                     "use_beam_search": False,
                     "seed":42
             }
-
             response = requests.post('http://localhost:11434/api/chat', json=data).json()
             print("response :", response)
             messages.append(response["message"])
             tool_call = response["message"]["tool_calls"][0]
+            # Get the function name
             function_name = tool_call["function"]["name"]
             print("function_name: ", function_name)
+            # Get the function parameters
             try:
                 function_params = json.loads(tool_call["function"]["arguments"])
             except:
                 function_params = tool_call["function"]["arguments"]
             print("function_params: ", function_params)
+            # Call the function
             function_result = names_to_functions[function_name](**function_params)
             context = function_result
             mails = []
@@ -432,6 +495,19 @@ def function_calling(query, model):
      
 
 def reorder_text_pdf(_context_, file_write, list_path, model, query):
+    """
+    Given a list of text paths and a query, this function uses the Mistral API to proofread and correct the text for spelling, grammar, and formatting errors while preserving its original meaning. It ensures proper spacing between words, corrects any misplaced line breaks, and maintains readability.
+
+    Parameters:
+    - _context_ (list): A list of text paths
+    - file_write (str): The path to write the corrected text to
+    - list_path (list): A list of text paths
+    - model (str): The model to use for the Mistral API call
+    - query (str): The query to answer
+
+    Returns:
+    - dict: A dictionary containing the answer to the query
+    """
     list_url = []
     for path in list_path:
         print(path)
@@ -545,6 +621,17 @@ def reorder_text_pdf(_context_, file_write, list_path, model, query):
 
 
 def pdf_questioning_llm(model, query, path):
+    """
+    Convert a PDF document to a list of images and perform a text questioning task on it using the Mistral API.
+    
+    Args:
+        model (str): The model to use for the text questioning task.
+        query (str): The query to ask about the PDF document.
+        path (str): The path to the PDF document.
+        
+    Returns:
+        dict or Exception: The answer to the query in a JSON format, or an Exception if the API call fails.
+    """
     list_img_path = [path]
     output_file = f"data/json/text.json"
     doc = fitz.open(path)
