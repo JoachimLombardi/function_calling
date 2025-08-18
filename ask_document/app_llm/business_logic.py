@@ -529,7 +529,7 @@ def function_calling(query, model):
                 print("function_result: ", function_result)
                 if isinstance(function_result, dict):
                     function_result = json.dumps(function_result)
-                messages.append({"role": "tool", "name": function_name, "content": function_result})
+                messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": function_name, "content": function_result})
                 print(messages)
                 response = client.chat.completions.create(
                 model=model,
