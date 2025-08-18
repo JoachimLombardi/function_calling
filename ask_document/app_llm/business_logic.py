@@ -10,6 +10,7 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from google.auth.transport.requests import Request
 from bs4 import BeautifulSoup
+from openai import OpenAI
 import requests
 import fitz
 from PIL import Image
@@ -26,6 +27,7 @@ from sklearn.tree import DecisionTreeRegressor
 from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error, root_mean_squared_error
 import joblib
 import numpy as np
+from django.conf import settings
 
 
 def image_questioning_llm(llm_choice, query, path="data/jpg/image.jpg"):
@@ -434,63 +436,109 @@ def function_calling(query, model):
     }
     # Function calling
     for attempt in range(1,4):
-        try:
-            print('api ollama call')
-            messages = [{"role": "system", "content": "Tu es un assistant expert. Utilise uniquement la sortie des fonctions tools pour répondre."}, 
-                        {"role": "user", "content": query}]
-            data =  {
+        if not settings.IS_RENDER:
+            try:
+                print('api ollama call')
+                messages = [{"role": "system", "content": "Tu es un assistant expert. Utilise uniquement la sortie des fonctions tools pour répondre."}, 
+                            {"role": "user", "content": query}]
+                data =  {
+                        "model": model,
+                        "messages": messages,
+                        "tools": tools,
+                        "stream": False,
+                        "echo": False,
+                        "max_tokens": 5000,
+                        "temperature": 0,
+                        "top_p": 1e-6,
+                        "top_k": -1,
+                        "logprobs": None,
+                        "n": 1,
+                        "best_of": 1,
+                        "use_beam_search": False,
+                        "seed":42
+                }
+                response = requests.post('http://localhost:11434/api/chat', json=data).json()
+                print("response :", response)
+                messages.append(response["message"])
+                tool_call = response["message"]["tool_calls"][0]
+                # Get the function name
+                function_name = tool_call["function"]["name"]
+                print("function_name: ", function_name)
+                # Get the function parameters
+                try:
+                    function_params = json.loads(tool_call["function"]["arguments"])
+                except:
+                    function_params = tool_call["function"]["arguments"]
+                print("function_params: ", function_params)
+                # Call the function
+                function_result = names_to_functions[function_name](**function_params)
+                context = function_result
+                mails = []
+                if function_name == "google_mail":
+                    mails = function_result[1]
+                    function_result = function_result[0]
+                print("function_result: ", function_result)
+                if isinstance(function_result, dict):
+                    function_result = json.dumps(function_result)
+                messages.append({"role": "tool", "name": function_name, "content": function_result})
+                print(messages)
+                data = {
                     "model": model,
                     "messages": messages,
-                    "tools": tools,
-                    "stream": False,
-                    "echo": False,
-                    "max_tokens": 5000,
-                    "temperature": 0,
-                    "top_p": 1e-6,
-                    "top_k": -1,
-                    "logprobs": None,
-                    "n": 1,
-                    "best_of": 1,
-                    "use_beam_search": False,
-                    "seed":42
-            }
-            response = requests.post('http://localhost:11434/api/chat', json=data).json()
-            print("response :", response)
-            messages.append(response["message"])
-            tool_call = response["message"]["tool_calls"][0]
-            # Get the function name
-            function_name = tool_call["function"]["name"]
-            print("function_name: ", function_name)
-            # Get the function parameters
+                    "stream": False
+                }
+                print(type(data))
+                response = requests.post('http://localhost:11434/api/chat', json=data).json()
+                print("===============\n", response)
+                print("===============\n", context)
+                return response, context, mails
+            except Exception as e:
+                print(f"Ollama call failed with error: {e}")
+        else:
             try:
-                function_params = json.loads(tool_call["function"]["arguments"])
-            except:
-                function_params = tool_call["function"]["arguments"]
-            print("function_params: ", function_params)
-            # Call the function
-            function_result = names_to_functions[function_name](**function_params)
-            context = function_result
-            mails = []
-            if function_name == "google_mail":
-                mails = function_result[1]
-                function_result = function_result[0]
-            print("function_result: ", function_result)
-            if isinstance(function_result, dict):
-                function_result = json.dumps(function_result)
-            messages.append({"role": "tool", "name": function_name, "content": function_result})
-            print(messages)
-            data = {
-                "model": model,
-                "messages": messages,
-                "stream": False
-            }
-            print(type(data))
-            response = requests.post('http://localhost:11434/api/chat', json=data).json()
-            print("===============\n", response)
-            print("===============\n", context)
-            return response, context, mails
-        except Exception as e:
-            print(f"Ollama call failed with error: {e}")
+                print('api huggingface call')
+                client = OpenAI(
+                base_url="https://router.huggingface.co/v1",
+                api_key=settings.HUGGINGFACE_API_KEY,)
+                messages = [{"role": "system", "content": "Tu es un assistant expert. Utilise uniquement la sortie des fonctions tools pour répondre."}, 
+                            {"role": "user", "content": query}]
+                response = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                tools=tools,
+                temperature=0,)
+                print("response :", response)
+                messages.append(response.choices[0].message)
+                tool_call = response["message"]["tool_calls"][0]
+                # Get the function name
+                function_name = tool_call["function"]["name"]
+                print("function_name: ", function_name)
+                # Get the function parameters
+                try:
+                    function_params = json.loads(tool_call["function"]["arguments"])
+                except:
+                    function_params = tool_call["function"]["arguments"]
+                print("function_params: ", function_params)
+                # Call the function
+                function_result = names_to_functions[function_name](**function_params)
+                context = function_result
+                mails = []
+                if function_name == "google_mail":
+                    mails = function_result[1]
+                    function_result = function_result[0]
+                print("function_result: ", function_result)
+                if isinstance(function_result, dict):
+                    function_result = json.dumps(function_result)
+                messages.append({"role": "tool", "name": function_name, "content": function_result})
+                print(messages)
+                response = client.chat.completions.create(
+                model=model,
+                messages=messages) 
+                print("===============\n", response)
+                print("===============\n", context) 
+                return response.choices[0], context, mails
+            except Exception as e:  
+                print(f"Huggingface call failed with error: {e}")
     return response, context, mails
      
 

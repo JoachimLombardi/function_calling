@@ -24,6 +24,9 @@ DEBUG = env.bool('DEBUG')
 
 ALLOWED_HOSTS = env.list('ALLOWED_HOSTS')
 
+IS_RENDER = env.bool('IS_RENDER')
+
+HUGGINGFACE_API_KEY = env.str('HUGGINGFACE_API_KEY')
 
 # Application definition
 
