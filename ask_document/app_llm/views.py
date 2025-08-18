@@ -40,7 +40,6 @@ def llm_choice(request):
             if "error" in response:
                 messages.error(request, response["error"])
                 response = ""
-            response = response["message"]["content"]
             response = markdown.markdown(response, extensions=['markdown.extensions.fenced_code'])
             return render(request, 'function_calling.html', {'form': form, 'response': response, 'context': context, 'mails': mails})
         else:

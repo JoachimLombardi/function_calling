@@ -491,7 +491,7 @@ def function_calling(query, model):
                 response = requests.post('http://localhost:11434/api/chat', json=data).json()
                 print("===============\n", response)
                 print("===============\n", context)
-                return response, context, mails
+                return response["message"]["content"], context, mails
             except Exception as e:
                 print(f"Ollama call failed with error: {e}")
         else:
@@ -536,7 +536,7 @@ def function_calling(query, model):
                 messages=messages) 
                 print("===============\n", response)
                 print("===============\n", context) 
-                return response.choices[0], context, mails
+                return response.choices[0].message.content, context, mails
             except Exception as e:  
                 print(f"Huggingface call failed with error: {e}")
     return response, context, mails
