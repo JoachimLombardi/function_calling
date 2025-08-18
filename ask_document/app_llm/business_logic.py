@@ -509,15 +509,15 @@ def function_calling(query, model):
                 temperature=0,)
                 print("response :", response)
                 messages.append(response.choices[0].message)
-                tool_call = response["message"]["tool_calls"][0]
+                tool_call = response.choices[0].message.tool_calls[0]
                 # Get the function name
-                function_name = tool_call["function"]["name"]
+                function_name = tool_call.function.name
                 print("function_name: ", function_name)
                 # Get the function parameters
                 try:
-                    function_params = json.loads(tool_call["function"]["arguments"])
+                    function_params = json.loads(tool_call.function.arguments)
                 except:
-                    function_params = tool_call["function"]["arguments"]
+                    function_params = tool_call.function.arguments
                 print("function_params: ", function_params)
                 # Call the function
                 function_result = names_to_functions[function_name](**function_params)
