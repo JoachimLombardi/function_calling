@@ -436,109 +436,102 @@ def function_calling(query, model):
     }
     # Function calling
     for attempt in range(1,4):
-        if not settings.IS_RENDER:
+        def build_messages(query):
+            """
+            Build the messages to be used in the conversation.
+
+            Args:
+                query (str): The query of the user.
+
+            Returns:
+                list: A list of messages to be used in the conversation.
+            """
+            return [
+            {"role": "system", "content": "Tu es un assistant expert. Utilise uniquement la sortie des fonctions tools pour répondre."},
+            {"role": "user", "content": query}
+            ]
+
+        def extract_tool_call(tool_call):
+            """
+            Extract the function name and its arguments from a tool call (either a ToolCall object or a dictionary).
+
+            Args:
+                tool_call (ToolCall or dict): The tool call.
+
+            Returns:
+                tuple: A tuple containing the function name and its arguments.
+            """
+            function_name = getattr(tool_call["function"], "name", None) if isinstance(tool_call, dict) else tool_call.function.name
+            args = getattr(tool_call["function"], "arguments", None) if isinstance(tool_call, dict) else tool_call.function.arguments
             try:
-                print('api ollama call')
-                messages = [{"role": "system", "content": "Tu es un assistant expert. Utilise uniquement la sortie des fonctions tools pour répondre."}, 
-                            {"role": "user", "content": query}]
-                data =  {
-                        "model": model,
-                        "messages": messages,
-                        "tools": tools,
-                        "stream": False,
-                        "echo": False,
-                        "max_tokens": 5000,
-                        "temperature": 0,
-                        "top_p": 1e-6,
-                        "top_k": -1,
-                        "logprobs": None,
-                        "n": 1,
-                        "best_of": 1,
-                        "use_beam_search": False,
-                        "seed":42
-                }
-                response = requests.post('http://localhost:11434/api/chat', json=data).json()
-                print("response :", response)
-                messages.append(response["message"])
-                tool_call = response["message"]["tool_calls"][0]
-                # Get the function name
-                function_name = tool_call["function"]["name"]
-                print("function_name: ", function_name)
-                # Get the function parameters
-                try:
-                    function_params = json.loads(tool_call["function"]["arguments"])
-                except:
-                    function_params = tool_call["function"]["arguments"]
-                print("function_params: ", function_params)
-                # Call the function
-                function_result = names_to_functions[function_name](**function_params)
-                context = function_result
-                mails = []
-                if function_name == "google_mail":
-                    mails = function_result[1]
-                    function_result = function_result[0]
-                print("function_result: ", function_result)
-                if isinstance(function_result, dict):
-                    function_result = json.dumps(function_result)
-                messages.append({"role": "tool", "name": function_name, "content": function_result})
-                print(messages)
+                params = json.loads(args)
+            except:
+                params = args
+            return function_name, params
+
+        def execute_tool(function_name, params):
+            """
+            Execute a tool function given its name and arguments.
+
+            Args:
+                function_name (str): The name of the tool function.
+                params (dict): The arguments of the tool function.
+
+            Returns:
+                tuple: A tuple containing the result of the tool function, the context and the mails.
+            """
+            result = names_to_functions[function_name](**params)
+            mails = []
+            context = result
+            if function_name == "google_mail":
+                mails = result[1]
+                result = result[0]
+            if isinstance(result, dict):
+                result = json.dumps(result)
+            return result, context, mails
+
+        # --- Sélection back-end (Ollama vs HF) ---
+        messages = build_messages(query)
+        try:
+            if not settings.IS_RENDER:
+                print("api ollama call")
                 data = {
                     "model": model,
                     "messages": messages,
-                    "stream": False
+                    "tools": tools,
+                    "stream": False,
+                    "temperature": 0,
+                    "max_tokens": 5000,
+                    "top_p": 1e-6,
+                    "top_k": -1,
+                    "seed": 42
                 }
-                print(type(data))
                 response = requests.post('http://localhost:11434/api/chat', json=data).json()
-                print("===============\n", response)
-                print("===============\n", context)
+                first_message = response["message"]
+                messages.append(first_message)
+                tool_call = first_message["tool_calls"][0]
+                function_name, params = extract_tool_call(tool_call)
+                print("function_name:", function_name, "params:", params)
+                tool_result, context, mails = execute_tool(function_name, params)
+                messages.append({"role": "tool", "name": function_name, "content": tool_result})
+                data = {"model": model, "messages": messages, "stream": False}
+                response = requests.post('http://localhost:11434/api/chat', json=data).json()
                 return response["message"]["content"], context, mails
-            except Exception as e:
-                print(f"Ollama call failed with error: {e}")
-        else:
-            try:
-                print('api huggingface call')
-                client = OpenAI(
-                base_url="https://router.huggingface.co/v1",
-                api_key=settings.HUGGINGFACE_API_KEY,)
-                messages = [{"role": "system", "content": "Tu es un assistant expert. Utilise uniquement la sortie des fonctions tools pour répondre."}, 
-                            {"role": "user", "content": query}]
-                response = client.chat.completions.create(
-                model=model,
-                messages=messages,
-                tools=tools,
-                temperature=0,)
-                print("response :", response)
-                messages.append(response.choices[0].message)
-                tool_call = response.choices[0].message.tool_calls[0]
-                # Get the function name
-                function_name = tool_call.function.name
-                print("function_name: ", function_name)
-                # Get the function parameters
-                try:
-                    function_params = json.loads(tool_call.function.arguments)
-                except:
-                    function_params = tool_call.function.arguments
-                print("function_params: ", function_params)
-                # Call the function
-                function_result = names_to_functions[function_name](**function_params)
-                context = function_result
-                mails = []
-                if function_name == "google_mail":
-                    mails = function_result[1]
-                    function_result = function_result[0]
-                print("function_result: ", function_result)
-                if isinstance(function_result, dict):
-                    function_result = json.dumps(function_result)
-                messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": function_name, "content": function_result})
-                print(messages)
-                response = client.chat.completions.create(
-                model=model,
-                messages=messages) 
-                print("===============\n", response)
-                print("===============\n", context) 
+            else:
+                print("api huggingface call")
+                client = OpenAI(base_url="https://router.huggingface.co/v1", api_key=settings.HUGGINGFACE_API_KEY)
+                response = client.chat.completions.create(model=model, messages=messages, tools=tools, temperature=0)
+                first_message = response.choices[0].message
+                messages.append(first_message)
+                tool_call = first_message.tool_calls[0]
+                function_name, params = extract_tool_call(tool_call)
+                print("function_name:", function_name, "params:", params)
+                tool_result, context, mails = execute_tool(function_name, params)
+                messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": function_name, "content": tool_result})
+                response = client.chat.completions.create(model=model, messages=messages)
                 return response.choices[0].message.content, context, mails
-            except Exception as e:  
-                print(f"Huggingface call failed with error: {e}")
+        except Exception as e:
+            print(f"LLM call failed with error: {e}")
     return response, context, mails
      
 
