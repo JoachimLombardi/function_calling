@@ -434,9 +434,8 @@ def function_calling(query, model):
         "create_best_model": functools.partial(create_best_model, data),
         "make_predictions": functools.partial(make_predictions)
     }
-    # Function calling
-    for attempt in range(1,4):
-        def build_messages(query):
+
+    def build_messages(query):
             """
             Build the messages to be used in the conversation.
 
@@ -451,47 +450,50 @@ def function_calling(query, model):
             {"role": "user", "content": query}
             ]
 
-        def extract_tool_call(tool_call):
-            """
-            Extract the function name and its arguments from a tool call (either a ToolCall object or a dictionary).
+    def extract_tool_call(tool_call):
+        """
+        Extract the function name and its arguments from a tool call (either a ToolCall object or a dictionary).
 
-            Args:
-                tool_call (ToolCall or dict): The tool call.
+        Args:
+            tool_call (ToolCall or dict): The tool call.
 
-            Returns:
-                tuple: A tuple containing the function name and its arguments.
-            """
-            function_name = getattr(tool_call["function"], "name", None) if isinstance(tool_call, dict) else tool_call.function.name
-            args = getattr(tool_call["function"], "arguments", None) if isinstance(tool_call, dict) else tool_call.function.arguments
-            try:
-                params = json.loads(args)
-            except:
-                params = args
-            return function_name, params
+        Returns:
+            tuple: A tuple containing the function name and its arguments.
+        """
+        function_name = getattr(tool_call["function"], "name", None) if isinstance(tool_call, dict) else tool_call.function.name
+        args = getattr(tool_call["function"], "arguments", None) if isinstance(tool_call, dict) else tool_call.function.arguments
+        try:
+            params = json.loads(args)
+        except:
+            params = args
+        return function_name, params
 
-        def execute_tool(function_name, params):
-            """
-            Execute a tool function given its name and arguments.
+    def execute_tool(function_name, params):
+        """
+        Execute a tool function given its name and arguments.
 
-            Args:
-                function_name (str): The name of the tool function.
-                params (dict): The arguments of the tool function.
+        Args:
+            function_name (str): The name of the tool function.
+            params (dict): The arguments of the tool function.
 
-            Returns:
-                tuple: A tuple containing the result of the tool function, the context and the mails.
-            """
-            result = names_to_functions[function_name](**params)
-            mails = []
-            context = result
-            if function_name == "google_mail":
-                mails = result[1]
-                result = result[0]
-            if isinstance(result, dict):
-                result = json.dumps(result)
-            return result, context, mails
+        Returns:
+            tuple: A tuple containing the result of the tool function, the context and the mails.
+        """
+        result = names_to_functions[function_name](**params)
+        mails = []
+        context = result
+        if function_name == "google_mail":
+            mails = result[1]
+            result = result[0]
+        if isinstance(result, dict):
+            result = json.dumps(result)
+        return result, context, mails
+    
+    messages = build_messages(query)
 
+    # Function calling
+    for attempt in range(1,4):
         # --- Sélection back-end (Ollama vs HF) ---
-        messages = build_messages(query)
         try:
             if not settings.IS_RENDER:
                 print("api ollama call")
