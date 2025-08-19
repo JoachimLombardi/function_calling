@@ -434,7 +434,7 @@ def function_calling(query, model):
         "create_best_model": functools.partial(create_best_model, data),
         "make_predictions": functools.partial(make_predictions)
     }
-
+    
     def build_messages(query):
             """
             Build the messages to be used in the conversation.
