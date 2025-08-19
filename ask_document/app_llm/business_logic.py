@@ -525,26 +525,26 @@ def function_calling(query, model):
                     "role": "tool", "name": fn, "content": res
                 }
 
-                # Premier appel
-                response = call_fn(data)
-                first_message = get_message(response)
-                messages.append(first_message)
+            # Premier appel
+            response = call_fn(data)
+            first_message = get_message(response)
+            messages.append(first_message)
 
-                # Extraction tool
-                tool_call = first_message.tool_calls[0] if settings.IS_RENDER else first_message["tool_calls"][0]
-                function_name, params = extract_tool_call(tool_call)
-                print("function_name:", function_name, "params:", params)
+            # Extraction tool
+            tool_call = first_message.tool_calls[0] if settings.IS_RENDER else first_message["tool_calls"][0]
+            function_name, params = extract_tool_call(tool_call)
+            print("function_name:", function_name, "params:", params)
 
-                # Exécution tool
-                tool_result, context, mails = execute_tool(function_name, params)
-                tool_msg = add_tool_msg(getattr(tool_call, "id", None), function_name, tool_result)
-                messages.append(tool_msg)
+            # Exécution tool
+            tool_result, context, mails = execute_tool(function_name, params)
+            tool_msg = add_tool_msg(getattr(tool_call, "id", None), function_name, tool_result)
+            messages.append(tool_msg)
 
-                # Deuxième appel
-                data = {"model": model, "messages": messages, "stream": False}
-                response = call_fn(data)
-                final_content = (get_message(response).content if settings.IS_RENDER else response["message"]["content"])
-                return final_content, context, mails
+            # Deuxième appel
+            data = {"model": model, "messages": messages, "stream": False}
+            response = call_fn(data)
+            final_content = (get_message(response).content if settings.IS_RENDER else response["message"]["content"])
+            return final_content, context, mails
         except Exception as e:
             print(f"LLM call failed with error: {e}")
     return response, context, mails
