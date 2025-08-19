@@ -491,23 +491,23 @@ def function_calling(query, model):
     
     messages = build_messages(query)
 
+    data = {
+                "model": model,
+                "messages": messages,
+                "tools": tools,
+                "stream": False,
+                "temperature": 0,
+                "max_tokens": 5000,
+                "top_p": 1e-6,
+                "seed": 42
+            }
+
     # Function calling
     for attempt in range(1,4):
         # --- Sélection back-end (Ollama vs HF) ---
         try:
             if not settings.IS_RENDER:
                 print("api ollama call")
-                data = {
-                    "model": model,
-                    "messages": messages,
-                    "tools": tools,
-                    "stream": False,
-                    "temperature": 0,
-                    "max_tokens": 5000,
-                    "top_p": 1e-6,
-                    "top_k": -1,
-                    "seed": 42
-                }
                 response = requests.post('http://localhost:11434/api/chat', json=data).json()
                 first_message = response["message"]
                 messages.append(first_message)
@@ -521,8 +521,7 @@ def function_calling(query, model):
                 return response["message"]["content"], context, mails
             else:
                 print("api huggingface call")
-                client = OpenAI(base_url="https://router.huggingface.co/v1", api_key=settings.HUGGINGFACE_API_KEY)
-                response = client.chat.completions.create(model=model, messages=messages, tools=tools, temperature=0)
+                response = OpenAI(base_url="https://router.huggingface.co/v1", api_key=settings.HUGGINGFACE_API_KEY).chat.completions.create(**data)
                 first_message = response.choices[0].message
                 messages.append(first_message)
                 tool_call = first_message.tool_calls[0]
@@ -530,7 +529,8 @@ def function_calling(query, model):
                 print("function_name:", function_name, "params:", params)
                 tool_result, context, mails = execute_tool(function_name, params)
                 messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": function_name, "content": tool_result})
-                response = client.chat.completions.create(model=model, messages=messages)
+                data = {"model": model, "messages": messages, "stream": False}
+                response = OpenAI(base_url="https://router.huggingface.co/v1", api_key=settings.HUGGINGFACE_API_KEY).chat.completions.create(**data)
                 return response.choices[0].message.content, context, mails
         except Exception as e:
             print(f"LLM call failed with error: {e}")
