@@ -450,6 +450,7 @@ def function_calling(query, model):
             {"role": "user", "content": query}
             ]
 
+
     def extract_tool_call(tool_call):
         """
         Extract the function name and its arguments from a tool call (either a ToolCall object or a dictionary).
@@ -467,6 +468,7 @@ def function_calling(query, model):
         except:
             params = args
         return function_name, params
+
 
     def execute_tool(function_name, params):
         """
@@ -506,32 +508,43 @@ def function_calling(query, model):
     for attempt in range(1,4):
         # --- Sélection back-end (Ollama vs HF) ---
         try:
-            if not settings.IS_RENDER:
-                print("api ollama call")
-                response = requests.post('http://localhost:11434/api/chat', json=data).json()
-                first_message = response["message"]
-                messages.append(first_message)
-                tool_call = first_message["tool_calls"][0]
-                function_name, params = extract_tool_call(tool_call)
-                print("function_name:", function_name, "params:", params)
-                tool_result, context, mails = execute_tool(function_name, params)
-                messages.append({"role": "tool", "name": function_name, "content": tool_result})
-                data = {"model": model, "messages": messages, "stream": False}
-                response = requests.post('http://localhost:11434/api/chat', json=data).json()
-                return response["message"]["content"], context, mails
-            else:
+            if settings.IS_RENDER:
                 print("api huggingface call")
-                response = OpenAI(base_url="https://router.huggingface.co/v1", api_key=settings.HUGGINGFACE_API_KEY).chat.completions.create(**data)
-                first_message = response.choices[0].message
+                client = OpenAI(base_url="https://router.huggingface.co/v1",
+                                api_key=settings.HUGGINGFACE_API_KEY)
+                call_fn = lambda d: client.chat.completions.create(**d)
+                get_message = lambda resp: resp.choices[0].message
+                add_tool_msg = lambda tool_call_id, fn, res: {
+                    "tool_call_id": tool_call_id, "role": "tool", "name": fn, "content": res
+                }
+            else:
+                print("api ollama call")
+                call_fn = lambda d: requests.post('http://localhost:11434/api/chat', json=d).json()
+                get_message = lambda resp: resp["message"]
+                add_tool_msg = lambda _id, fn, res: {
+                    "role": "tool", "name": fn, "content": res
+                }
+
+                # Premier appel
+                response = call_fn(data)
+                first_message = get_message(response)
                 messages.append(first_message)
-                tool_call = first_message.tool_calls[0]
+
+                # Extraction tool
+                tool_call = first_message.tool_calls[0] if settings.IS_RENDER else first_message["tool_calls"][0]
                 function_name, params = extract_tool_call(tool_call)
                 print("function_name:", function_name, "params:", params)
+
+                # Exécution tool
                 tool_result, context, mails = execute_tool(function_name, params)
-                messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": function_name, "content": tool_result})
+                tool_msg = add_tool_msg(getattr(tool_call, "id", None), function_name, tool_result)
+                messages.append(tool_msg)
+
+                # Deuxième appel
                 data = {"model": model, "messages": messages, "stream": False}
-                response = OpenAI(base_url="https://router.huggingface.co/v1", api_key=settings.HUGGINGFACE_API_KEY).chat.completions.create(**data)
-                return response.choices[0].message.content, context, mails
+                response = call_fn(data)
+                final_content = (get_message(response).content if settings.IS_RENDER else response["message"]["content"])
+                return final_content, context, mails
         except Exception as e:
             print(f"LLM call failed with error: {e}")
     return response, context, mails
