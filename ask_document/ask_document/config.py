@@ -10,7 +10,10 @@ env = Env()
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # Directory to export the model
-EXPORT_DIR = os.path.join(BASE_DIR, 'data')
+MEDIA_ROOT = os.path.join(BASE_DIR, 'data')
+
+# Directory to export the model
+MEDIA_URL = '/data/'
 
 # Take environment variables from .env file
 Env.read_env(os.path.join(BASE_DIR, '.env'))

@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import re
+import unicodedata
 from ollama import chat
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -14,7 +15,7 @@ from openai import OpenAI
 import requests
 import fitz
 from PIL import Image
-from ask_document.config import EXPORT_DIR
+from ask_document.config import MEDIA_ROOT
 import pandas as pd
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
@@ -300,7 +301,7 @@ def function_calling(query, model):
                 }
                 if model_with_best_params:
                     # Sauvegarder le modèle avec les meilleurs paramètres
-                    model_path = Path(EXPORT_DIR + f'/models/{name}.joblib')
+                    model_path = Path(MEDIA_ROOT + f'/models/{name}.joblib')
                     joblib.dump(model_with_best_params, model_path)
             except Exception as e:
                 print(f"Erreur avec le modèle {name}: {e}")
@@ -312,18 +313,18 @@ def function_calling(query, model):
             model_scores = dict(sorted(model_scores.items(), key=lambda item: item[1]['r2'], reverse=True))
             best_model = max(model_scores.items(), key=lambda x: x[1]["r2"])
             best_model_name = best_model[0]
-            model_with_best_params_scores = Path(EXPORT_DIR + '/json/model_with_best_params_scores.json')
+            model_with_best_params_scores = Path(MEDIA_ROOT + '/json/model_with_best_params_scores.json')
             with open(model_with_best_params_scores, 'w') as f:
                 json.dump(model_scores, f)
         if model_best_params:
-            best_model_params = Path(EXPORT_DIR + f'/json/best_model_params.json')
+            best_model_params = Path(MEDIA_ROOT + f'/json/best_model_params.json')
             with open(best_model_params, 'w') as f:
                 json.dump(model_best_params, f)
         if model_final_scores:
             model_final_scores = dict(sorted(model_final_scores.items(), key=lambda item: item[1]['r2'], reverse=True))
             best_model_final = max(model_final_scores.items(), key=lambda x: x[1]["r2"])
             best_model_name_final = best_model_final[0]
-            model_with_best_params_final_scores = Path(EXPORT_DIR + '/json/model_with_best_params_final_scores.json')
+            model_with_best_params_final_scores = Path(MEDIA_ROOT + '/json/model_with_best_params_final_scores.json')
             with open(model_with_best_params_final_scores, 'w') as f:
                 json.dump(model_final_scores, f)
         return f"Best model with best params on train and test set: {best_model_name}, Best model with best params on validation set: {best_model_name_final}"
@@ -343,11 +344,11 @@ def function_calling(query, model):
             str: The predicted price of the car in dollars.
         """
         # Load the best model
-        with open(EXPORT_DIR + '/json/model_with_best_params_scores.json') as f:
+        with open(MEDIA_ROOT + '/json/model_with_best_params_scores.json') as f:
             model_scores = json.load(f)
         # Select the best model
         best_model_name = max(model_scores.items(), key=lambda x: x[1]["r2"])[0]
-        model_path = Path(EXPORT_DIR + f'/models/{best_model_name}.joblib')
+        model_path = Path(MEDIA_ROOT + f'/models/{best_model_name}.joblib')
         model = joblib.load(model_path)
         # Mapping colors
         mapping = {
@@ -586,7 +587,7 @@ def reorder_text_pdf(_context_, file_write, list_path, model, query):
 
     ## Output_format:
     {
-        "text":string
+        "answer":string
     }
     """
     for attempt in range(1,4):
@@ -613,15 +614,8 @@ def reorder_text_pdf(_context_, file_write, list_path, model, query):
             response = requests.post('http://localhost:11434/api/chat', json=data).json()
             print("===============\n", response)
             output = response["message"]["content"]
-            # print(output)
-            pattern = r'\{.+\}'
-            json_objects = re.findall(pattern, output, re.DOTALL)
-            try:
-                output = json_objects[0]
-            except:
-                pass
-            output = re.sub(r'\n\s+', '', output).replace("\\n", " ")
             output = json.loads(output)
+            output = output = output.replace("\u202f", " ").replace("\n", " ")
             print("=================================================================\n", output)
             with open(file_write, "w", encoding="utf-8") as f:
                 json.dump(output, f, ensure_ascii=False, indent=4)
@@ -633,7 +627,7 @@ def reorder_text_pdf(_context_, file_write, list_path, model, query):
             3. Give the answer in a json format.
             
             ## Text:
-            '"""+output["text"]+"""'
+            '"""+output["answer"]+"""'
 
             ## Query:
             '"""+query+"""'
@@ -662,15 +656,15 @@ def reorder_text_pdf(_context_, file_write, list_path, model, query):
             response = requests.post('http://localhost:11434/api/chat', json=data).json()
             print("===============\n", response)
             response = response["message"]["content"]
-            pattern = r'\{.+\}'
-            json_objects = re.findall(pattern, output, re.DOTALL)
+            print("=================================================================\n output", output)
             try:
-                output = json_objects[0]
-            except:
+                output = json.loads(response)
+                output = output.get("answer")
+                print("=================================================================\n output", output)
+            except json.decoder.JSONDecodeError:
+                output = response
                 pass
-            output = re.sub(r'\n\s+', '', output).replace("\\n", " ")
-            response = json.loads(output)
-            return response
+            return output
         except Exception as e:
             print(f"Mistral API call failed with error: {e}")
             print(f"Attempt {attempt} failed. Retrying...")
@@ -703,7 +697,7 @@ def pdf_questioning_llm(model, query, path):
         img.save(img_path, "JPEG", quality=100)
     doc.close()
     try:
-        reorder_text_pdf(text, output_file, list_img_path, model, query)
+        return reorder_text_pdf(text, output_file, list_img_path, model, query)
     except Exception as e:
         return e
 

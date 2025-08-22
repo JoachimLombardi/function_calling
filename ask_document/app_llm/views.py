@@ -1,5 +1,7 @@
+from pathlib import Path
 from django.conf import settings
 from django.shortcuts import render
+from ask_document.config import MEDIA_ROOT, MEDIA_URL
 from .utils import save_file
 from .business_logic import function_calling, image_questioning_llm, pdf_questioning_llm
 from .forms import FunctionCallingForm, ImageUploadForm, PdfUploadForm
@@ -17,7 +19,7 @@ def image_questioning(request):
             save_file(save_path, image_file)
             query = form.cleaned_data['query']
             llm_choice = form.cleaned_data['llm_choice']
-            image_url = settings.MEDIA_URL + save_path
+            image_url = MEDIA_URL + save_path
             try:
                 response = image_questioning_llm(llm_choice, query)
                 response = markdown.markdown(response)
@@ -51,15 +53,15 @@ def pdf_questioning(request):
     form = PdfUploadForm(request.POST or None, request.FILES)
     if request.method == 'POST':
         if form.is_valid():
-            image_file = form.cleaned_data['pdf']
-            save_path = 'data/pdf/text.pdf'
-            save_file(save_path, image_file)
+            save_path = 'pdf/text.pdf'
             query = form.cleaned_data['query']
             llm_choice = form.cleaned_data['llm_choice']
-            pdf_url = settings.MEDIA_URL + save_path
+            pdf_path = Path(MEDIA_ROOT).joinpath(save_path)
+            pdf_url = request.build_absolute_uri(MEDIA_URL + save_path)
             try:
-                response = pdf_questioning_llm(llm_choice, query, save_path)
+                response = pdf_questioning_llm(llm_choice, query, pdf_path)
                 response = markdown.markdown(response)
+                print("pdf_url: ",pdf_url)
             except Exception as e:
                 messages.error(request, str(e))
                 response = ""

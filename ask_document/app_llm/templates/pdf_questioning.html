@@ -24,34 +24,38 @@
             {% endfor %}
         </div>
     {% endif %}
-<div class="container mt-5">
-    
-    <h1 class="text-center mb-4">pdf questioning</h1>
+    <div class="container mt-5">
+        
+        <h1 class="text-center mb-4">pdf questioning</h1>
 
-    <form method="POST" action="{% url 'pdf_questioning' %}" enctype="multipart/form-data" class="mb-4">
-        {% csrf_token %}
-        {{ form.as_p }}
-        <button type="submit" class="btn btn-primary">Envoyer</button>
-    </form>
+        <form method="POST" action="{% url 'pdf_questioning' %}" enctype="multipart/form-data" class="mb-4">
+            {% csrf_token %}
+            {{ form.as_p }}
+            <button type="submit" class="btn btn-primary">Envoyer</button>
+        </form>
 
-    {% if response %}
-    <div class="card mb-4">
-        <div class="card-header">
-            <h2 class="card-title">PDF :</h2>
-        </div>
-        <div class="card-body text-center">
-            <embed src="{{ pdf_url }}" type="application/pdf" width="100%" height="600px" style="border: 1px solid #ccc; border-radius: 8px;" />
-        </div>
+        {% if response %}
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h2 class="card-title">Réponse :</h2>
+                </div>
+                <div class="card-body">
+                    <p class="card-text">{{ response|safe }}</p>
+                </div>
+            </div>
+        {% endif %}
+
+        {% if pdf_url %}
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h2 class="card-title">PDF :</h2>
+                </div>
+                <div class="card-body text-center">
+                    <embed src="{{ pdf_url }}" type="application/pdf" width="100%" height="600px"
+                        style="border: 1px solid #ccc; border-radius: 8px;" />
+                </div>
+            </div>
+        {% endif %}
+
     </div>
-    <div class="card mb-4">
-        <div class="card-header">
-            <h2 class="card-title">Réponse :</h2>
-        </div>
-        <div class="card-body">
-            <p class="card-text">{{ response|safe }}</p>
-        </div>
-    </div>
-    {% endif %}
-</div>
-
 {% endblock %}
