@@ -615,7 +615,6 @@ def reorder_text_pdf(_context_, file_write, list_path, model, query):
             print("===============\n", response)
             output = response["message"]["content"]
             output = json.loads(output)
-            output = output = output.replace("\u202f", " ").replace("\n", " ")
             print("=================================================================\n", output)
             with open(file_write, "w", encoding="utf-8") as f:
                 json.dump(output, f, ensure_ascii=False, indent=4)
@@ -682,18 +681,22 @@ def pdf_questioning_llm(model, query, path):
     Returns:
         dict or Exception: The answer to the query in a JSON format, or an Exception if the API call fails.
     """
-    list_img_path = [path]
     output_file = f"data/json/text.json"
     doc = fitz.open(path)
-    text = [doc.load_page(page_index).get_text() for page_index in range(doc.page_count)]
     list_img_path = []
-    for i, page_num in enumerate(range(len(doc))):
+    text = []
+    for page_num in range(len(doc)):
         page = doc.load_page(page_num)
+        # Extract text
+        text.append(page.get_text().replace("\n", " ").replace("\u202f", " ").strip())
+        # Image path
+        img_path = path.parent / f"{path.stem}_{page_num}.jpg"
+        list_img_path.append(img_path)
+        # Convert to image
         matrix = fitz.Matrix(2, 2) 
         pix = page.get_pixmap(matrix=matrix)
         img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-        img_path = f"data/pdf/{os.path.basename(path).replace('.pdf', f'_{i}.jpg')}"
-        list_img_path.append(img_path)
+        # Save image
         img.save(img_path, "JPEG", quality=100)
     doc.close()
     try:
