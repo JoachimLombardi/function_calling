@@ -56,16 +56,24 @@ def pdf_questioning(request):
             save_path = 'pdf/text.pdf'
             query = form.cleaned_data['query']
             llm_choice = form.cleaned_data['llm_choice']
+            pdf_file = form.cleaned_data['pdf']
             pdf_path = Path(MEDIA_ROOT).joinpath(save_path)
+            # Écriture du fichier
+            with open(pdf_path, "wb") as f:
+                for chunk in form.cleaned_data["pdf"].chunks():
+                    f.write(chunk)
             pdf_url = request.build_absolute_uri(MEDIA_URL + save_path)
+            print("DEBUG pdf_url:", pdf_url)
             try:
-                response = pdf_questioning_llm(llm_choice, query, pdf_path)
+                response, context = pdf_questioning_llm(llm_choice, query, pdf_path)
                 response = markdown.markdown(response)
-                print("pdf_url: ",pdf_url)
+                context = markdown.markdown(context)
             except Exception as e:
                 messages.error(request, str(e))
                 response = ""
-            return render(request, 'pdf_questioning.html', {'form': form, 'response': response, 'pdf_url': pdf_url})
+                context = ""
+                pdf_url = ""
+            return render(request, 'pdf_questioning.html', {'form': form, 'response': response, 'context': context, 'pdf_url': pdf_url})
         else:
             messages.error(request, "Le formulaire n'est pas valide.")
     return render(request, 'pdf_questioning.html', {'form': form})

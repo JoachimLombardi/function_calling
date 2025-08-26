@@ -613,11 +613,10 @@ def reorder_text_pdf(_context_, file_write, list_path, model, query):
                 messages[0]["images"].extend([image_url])
             response = requests.post('http://localhost:11434/api/chat', json=data).json()
             print("===============\n", response)
-            output = response["message"]["content"]
-            output = json.loads(output)
-            print("=================================================================\n", output)
-            with open(file_write, "w", encoding="utf-8") as f:
-                json.dump(output, f, ensure_ascii=False, indent=4)
+            context = response["message"]["content"]
+            context = json.loads(context)
+            context = context.get("answer").replace("\n", " ").replace("\u202f", " ").strip()
+            print("=================================================================\n", context)
             template = """ You are a document reader, you will be given a text and a query. Your task is to answer the query based on the text.
 
             ## Instructions:
@@ -626,7 +625,7 @@ def reorder_text_pdf(_context_, file_write, list_path, model, query):
             3. Give the answer in a json format.
             
             ## Text:
-            '"""+output["answer"]+"""'
+            '"""+context+"""'
 
             ## Query:
             '"""+query+"""'
@@ -655,15 +654,14 @@ def reorder_text_pdf(_context_, file_write, list_path, model, query):
             response = requests.post('http://localhost:11434/api/chat', json=data).json()
             print("===============\n", response)
             response = response["message"]["content"]
-            print("=================================================================\n output", output)
+            print("=================================================================\n response", response)
             try:
-                output = json.loads(response)
-                output = output.get("answer")
-                print("=================================================================\n output", output)
+                response = json.loads(response)
+                response = response.get("answer")
+                print("=================================================================\n response", response)
             except json.decoder.JSONDecodeError:
-                output = response
                 pass
-            return output
+            return response, context
         except Exception as e:
             print(f"Mistral API call failed with error: {e}")
             print(f"Attempt {attempt} failed. Retrying...")
@@ -688,7 +686,7 @@ def pdf_questioning_llm(model, query, path):
     for page_num in range(len(doc)):
         page = doc.load_page(page_num)
         # Extract text
-        text.append(page.get_text().replace("\n", " ").replace("\u202f", " ").strip())
+        text.append(page.get_text())
         # Image path
         img_path = path.parent / f"{path.stem}_{page_num}.jpg"
         list_img_path.append(img_path)
