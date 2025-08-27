@@ -544,14 +544,16 @@ def function_calling(query, model):
             # Deuxième appel
             data = {"model": model, "messages": messages, "stream": False}
             response = call_fn(data)
-            final_content = (get_message(response).content if settings.IS_RENDER else response["message"]["content"])
+            final_content = (get_message(response).content if settings.IS_RENDER else get_message(response)["content"])
             return final_content, context, mails
         except Exception as e:
-            print(f"LLM call failed with error: {e}")
-    return response, context, mails
+            print(f"Attempt {attempt}/3 \n API call failed with error: {e} - retrying...")
+            final_content = ""
+            context = ""
+    return final_content, context, mails
      
 
-def reorder_text_pdf(_context_, file_write, list_path, model, query):
+def reorder_text_pdf(_context_, list_path, model, query):
     """
     Given a list of text paths and a query, this function uses the Mistral API to proofread and correct the text for spelling, grammar, and formatting errors while preserving its original meaning. It ensures proper spacing between words, corrects any misplaced line breaks, and maintains readability.
 
@@ -565,20 +567,19 @@ def reorder_text_pdf(_context_, file_write, list_path, model, query):
     Returns:
     - dict: A dictionary containing the answer to the query
     """
-    list_url = []
+    # Encode images
+    list_b64 = []
     for path in list_path:
-        print(path)
         try:
             with open(path, "rb") as image_file:
-                base64_image = base64.b64encode(image_file.read()).decode("utf-8")
+                list_b64.append(base64.b64encode(image_file.read()).decode("utf-8"))
         except FileNotFoundError:
             print(f"Error: The file {path} was not found.")
             return None
         except Exception as e:  
             print(f"Error: {e}")
             return None
-        list_url.append(base64_image)
-    template = """Please proofread and correct the following French text for spelling, grammar, and formatting errors while preserving its original meaning. 
+    proofread_template = """Please proofread and correct the following French text for spelling, grammar, and formatting errors while preserving its original meaning. 
     Ensure proper spacing between words, correct any misplaced line breaks, and maintain readability. Do not alter the style or tone of the original text. 
     Ignore headers, footers, and any repetitive elements appearing on each page.
     If necessary, make minor adjustments for clarity.
@@ -590,81 +591,83 @@ def reorder_text_pdf(_context_, file_write, list_path, model, query):
         "answer":string
     }
     """
-    for attempt in range(1,4):
-        try:
-            messages = [{"role":"user", "content": template, "images": []}]
-            data =  {
-                    "model": model,
-                    "messages": messages,
-                    "stream": False,
-                    "echo": False,
-                    "max_tokens": 5000,
-                    "temperature": 0,
-                    "top_p": 1e-6,
-                    "top_k": -1,
-                    "logprobs": None,
-                    "n": 1,
-                    "best_of": 1,
-                    "use_beam_search": False,
-                    "seed":42,
-            }
-            for part_text, image_url in zip(_context_, list_url):     
-                messages[0]["content"] += "\n\n" + part_text
-                messages[0]["images"].extend([image_url])
-            response = requests.post('http://localhost:11434/api/chat', json=data).json()
-            print("===============\n", response)
-            context = response["message"]["content"]
-            context = json.loads(context)
-            context = context.get("answer").replace("\n", " ").replace("\u202f", " ").strip()
-            print("=================================================================\n", context)
-            template = """ You are a document reader, you will be given a text and a query. Your task is to answer the query based on the text.
-
-            ## Instructions:
-            1. Read the text and the query.
-            2. Answer the query based on the text.
-            3. Give the answer in a json format.
-            
-            ## Text:
-            '"""+context+"""'
-
-            ## Query:
-            '"""+query+"""'
-
-            ## Output_format:
-            {
-                "answer":string
-            }
-            """
-            messages = [{"role":"user", "content": template}]
-            data =  {
-                    "model": model,
-                    "messages": messages,
-                    "stream": False,
-                    "echo": False,
-                    "max_tokens": 5000,
-                    "temperature": 0,
-                    "top_p": 1e-6,
-                    "top_k": -1,
-                    "logprobs": None,
-                    "n": 1,
-                    "best_of": 1,
-                    "use_beam_search": False,
-                    "seed":42,
-            }
-            response = requests.post('http://localhost:11434/api/chat', json=data).json()
-            print("===============\n", response)
-            response = response["message"]["content"]
-            print("=================================================================\n response", response)
+    messages = [{"role":"user", "content": proofread_template, "images": list_b64}]
+    messages[0]["content"] += "\n\n" + "\n\n".join(_context_)
+    # Api client selection
+    if settings.IS_RENDER:
+        print("api huggingface call")
+        client = OpenAI(base_url="https://router.huggingface.co/v1",
+                        api_key=settings.HUGGINGFACE_API_KEY)
+        call_fn = lambda d: client.chat.completions.create(**d)
+        get_message = lambda resp: resp.choices[0].message.content
+    else:
+        print("api ollama call")
+        call_fn = lambda d: requests.post('http://localhost:11434/api/chat', json=d).json()
+        get_message = lambda resp: resp["message"]["content"]
+    # Api call
+    def api_call(payload):
+        """
+        Makes an API call to the Mistral API using the given payload.
+        
+        Args:
+            payload (dict): The payload to send to the API.
+        
+        Returns:
+            str or None: The response message content if the API call is successful, None otherwise.
+        
+        Raises:
+            Exception: If the API call fails.
+        """
+        for attempt in range(3):
             try:
-                response = json.loads(response)
-                response = response.get("answer")
-                print("=================================================================\n response", response)
-            except json.decoder.JSONDecodeError:
-                pass
-            return response, context
-        except Exception as e:
-            print(f"Mistral API call failed with error: {e}")
-            print(f"Attempt {attempt} failed. Retrying...")
+                response = call_fn(payload)
+                return get_message(response)
+            except Exception as e:
+                print(f"Api call failed with error: {e} - attempt {attempt + 1}/{3} - retrying...")
+                return None
+    # Api call to reorder extracted text with help of images 
+    payload = {
+                "model": model,
+                "messages": messages,
+                "stream": False,
+                "temperature": 0,
+                "max_tokens": 5000,
+                "top_p": 1e-6,
+                "seed": 42
+            }
+    context = api_call(payload)
+    try:
+        context = json.loads(context).get("answer").replace("\n", " ").replace("\u202f", " ").strip()
+    except json.decoder.JSONDecodeError as e:
+        print(f"Error: {e}")
+    print("=================================================================\n", context)
+    query_template = """ You are a document reader, you will be given a text and a query. Your task is to answer the query based on the text.
+
+    ## Instructions:
+    1. Read the text and the query.
+    2. Answer the query based on the text.
+    3. Give the answer in a json format.
+    
+    ## Text:
+    '"""+context+"""'
+
+    ## Query:
+    '"""+query+"""'
+
+    ## Output_format:
+    {
+        "answer":string
+    }
+    """
+    # Api call to answer the query to the text
+    payload["messages"] = [{"role":"user", "content": query_template}]
+    response = api_call(payload)
+    try:
+        response = json.loads(response).get("answer")
+        print("=================================================================\n response", response)
+    except json.decoder.JSONDecodeError as e:
+        print("Error: ", e)
+    return response, context
 
 
 def pdf_questioning_llm(model, query, path):
@@ -679,7 +682,6 @@ def pdf_questioning_llm(model, query, path):
     Returns:
         dict or Exception: The answer to the query in a JSON format, or an Exception if the API call fails.
     """
-    output_file = f"data/json/text.json"
     doc = fitz.open(path)
     list_img_path = []
     text = []
@@ -698,7 +700,7 @@ def pdf_questioning_llm(model, query, path):
         img.save(img_path, "JPEG", quality=100)
     doc.close()
     try:
-        return reorder_text_pdf(text, output_file, list_img_path, model, query)
+        return reorder_text_pdf(text, list_img_path, model, query)
     except Exception as e:
         return e
 
