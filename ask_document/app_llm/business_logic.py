@@ -573,11 +573,8 @@ def reorder_text_pdf(_context_, list_path, model, query):
         try:
             with open(path, "rb") as image_file:
                 list_b64.append(base64.b64encode(image_file.read()).decode("utf-8"))
-        except FileNotFoundError:
-            print(f"Error: The file {path} was not found.")
-            return None
-        except Exception as e:  
-            print(f"Error: {e}")
+        except Exception as e:
+            print(f"The file {path} could not be read. Error: {e}")
             return None
     proofread_template = """Please proofread and correct the following French text for spelling, grammar, and formatting errors while preserving its original meaning. 
     Ensure proper spacing between words, correct any misplaced line breaks, and maintain readability. Do not alter the style or tone of the original text. 
@@ -591,8 +588,25 @@ def reorder_text_pdf(_context_, list_path, model, query):
         "answer":string
     }
     """
-    messages = [{"role":"user", "content": proofread_template, "images": list_b64}]
-    messages[0]["content"] += "\n\n" + "\n\n".join(_context_)
+    
+    def split_by_words(text, chunk_size=1000):
+        words = text.split()
+        for i in range(0, len(words), chunk_size):
+            yield " ".join(words[i:i+chunk_size])
+
+
+    def payload(messages):
+        return {
+        "model": model,
+        "messages": messages,
+        "stream": False,
+        "temperature": 0,
+        "max_tokens": 5000,
+        "top_p": 1e-6,
+        "seed": 42
+    }
+
+
     # Api client selection
     if settings.IS_RENDER:
         print("api huggingface call")
@@ -600,10 +614,13 @@ def reorder_text_pdf(_context_, list_path, model, query):
                         api_key=settings.HUGGINGFACE_API_KEY)
         call_fn = lambda d: client.chat.completions.create(**d)
         get_message = lambda resp: resp.choices[0].message.content
+       
     else:
         print("api ollama call")
         call_fn = lambda d: requests.post('http://localhost:11434/api/chat', json=d).json()
         get_message = lambda resp: resp["message"]["content"]
+
+
     # Api call
     def api_call(payload):
         """
@@ -624,23 +641,49 @@ def reorder_text_pdf(_context_, list_path, model, query):
                 return get_message(response)
             except Exception as e:
                 print(f"Api call failed with error: {e} - attempt {attempt + 1}/{3} - retrying...")
-                return None
+        return None
+    
+    
     # Api call to reorder extracted text with help of images 
-    payload = {
-                "model": model,
-                "messages": messages,
-                "stream": False,
-                "temperature": 0,
-                "max_tokens": 5000,
-                "top_p": 1e-6,
-                "seed": 42
-            }
-    context = api_call(payload)
-    try:
-        context = json.loads(context).get("answer").replace("\n", " ").replace("\u202f", " ").strip()
-    except json.decoder.JSONDecodeError as e:
-        print(f"Error: {e}")
-    print("=================================================================\n", context)
+    def correct_chunk(chunk, image):
+        """
+        Reorders a chunk of text with the help of an image.
+
+        Sends a call to the Mistral API with a payload containing the chunk of text and the image.
+        The API will reorder the text using the image as context and return a corrected version of the text.
+
+        Args:
+            chunk (str): The chunk of text to be reordered.
+            image (str): The image to be used as context for the reordering.
+
+        Returns:
+            str: The corrected version of the text, or an empty string if the API call fails.
+        """
+        messages = [{"role":"user", "content": proofread_template + "\n\n" + chunk, "images": [image]}]
+        corrected_chunk = api_call(payload(messages))
+        if not corrected_chunk:
+            return ""
+        try:
+            corrected_chunk = json.loads(corrected_chunk)
+            corrected_chunk = corrected_chunk.get("answer", corrected_chunk)
+        except json.decoder.JSONDecodeError as e:
+            print(f"Error: {e}")
+            pass
+        corrected_chunk = corrected_chunk.replace("\n", " ").replace("\u202f", " ").strip()
+        return corrected_chunk
+     
+
+    context = ""
+    for page, image in zip(_context_, list_b64):
+        if len(page.split()) > 1000:
+            for chunk in split_by_words(page):
+                corrected_chunk = correct_chunk(chunk, image)
+                context += " " + corrected_chunk        
+        else:
+            corrected_chunk = correct_chunk(page, image)
+            context += " " + corrected_chunk
+    context = re.sub(r"\s+", " ", context).strip()
+    
     query_template = """ You are a document reader, you will be given a text and a query. Your task is to answer the query based on the text.
 
     ## Instructions:
@@ -660,10 +703,11 @@ def reorder_text_pdf(_context_, list_path, model, query):
     }
     """
     # Api call to answer the query to the text
-    payload["messages"] = [{"role":"user", "content": query_template}]
-    response = api_call(payload)
+    messages = [{"role":"user", "content": query_template}]
+    response = api_call(payload(messages))
     try:
-        response = json.loads(response).get("answer")
+        response = json.loads(response)
+        response = response.get("answer", response)
         print("=================================================================\n response", response)
     except json.decoder.JSONDecodeError as e:
         print("Error: ", e)
