@@ -659,6 +659,7 @@ def reorder_text_pdf(_context_, list_path, model, query):
         Returns:
             str: The corrected version of the text, or an empty string if the API call fails.
         """
+        print("DEBUG chunk:", chunk)
         messages = [{"role":"user", "content": proofread_template + "\n\n" + chunk, "images": [image]}]
         corrected_chunk = api_call(payload(messages))
         if not corrected_chunk:
@@ -672,7 +673,6 @@ def reorder_text_pdf(_context_, list_path, model, query):
         corrected_chunk = corrected_chunk.replace("\n", " ").replace("\u202f", " ").strip()
         return corrected_chunk
      
-
     context = ""
     for page, image in zip(_context_, list_b64):
         if len(page.split()) > 1000:
