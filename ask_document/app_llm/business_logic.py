@@ -3,8 +3,7 @@ import functools
 import json
 import os
 from pathlib import Path
-import re
-import unicodedata
+import textwrap
 from ollama import chat
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -29,6 +28,8 @@ from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error, r
 import joblib
 import numpy as np
 from django.conf import settings
+from sentence_transformers import SentenceTransformer
+import faiss
 
 
 def image_questioning_llm(llm_choice, query, path="data/jpg/image.jpg"):
@@ -589,10 +590,8 @@ def reorder_text_pdf(_context_, list_path, model, query):
     }
     """
     
-    def split_by_words(text, chunk_size=1000):
-        words = text.split()
-        for i in range(0, len(words), chunk_size):
-            yield " ".join(words[i:i+chunk_size])
+    def chunk_text(text, chunk_size=1000):
+        return textwrap.wrap(text, chunk_size)
 
 
     def payload(messages):
@@ -673,16 +672,31 @@ def reorder_text_pdf(_context_, list_path, model, query):
         corrected_chunk = corrected_chunk.replace("\n", " ").replace("\u202f", " ").strip()
         return corrected_chunk
      
-    context = ""
+     
+    # Chunking and correction
+    corrected_chunks = []
+    model = SentenceTransformer('bert-base-nli-mean-tokens')
     for page, image in zip(_context_, list_b64):
         if len(page.split()) > 1000:
-            for chunk in split_by_words(page):
-                corrected_chunk = correct_chunk(chunk, image)
-                context += " " + corrected_chunk        
+            for chunk in chunk_text(page):
+                corrected_chunks.append(correct_chunk(chunk, image))
         else:
-            corrected_chunk = correct_chunk(page, image)
-            context += " " + corrected_chunk
-    context = re.sub(r"\s+", " ", context).strip()
+            corrected_chunks.append(correct_chunk(page, image))
+    # Vectorization
+    embeddings = np.array(model.encode(corrected_chunks)).astype(np.float32)
+    # Index creation
+    index = faiss.IndexFlatL2(embeddings.shape[1])
+    # add embeddings to index
+    index.add(embeddings)
+    # Vector query
+    query = model.encode([query]).astype(np.float32)
+    # search the index for similar vectors
+    distances, ind = index.search(query, 3)
+    # get the most similar chunks
+    context = ""
+    for i in ind[0]:
+        context += "\n" + corrected_chunks[i]
+
     
     query_template = """ You are a document reader, you will be given a text and a query. Your task is to answer the query based on the text.
 
