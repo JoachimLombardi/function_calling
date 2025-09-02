@@ -683,20 +683,20 @@ def reorder_text_pdf(_context_, list_path, model, query):
         else:
             corrected_chunks.append(correct_chunk(page, image))
     # Vectorization
-    embeddings = np.array(model.encode(corrected_chunks)).astype(np.float32)
-    # Index creation
-    index = faiss.IndexFlatL2(embeddings.shape[1])
-    # add embeddings to index
-    index.add(embeddings)
-    # Vector query
-    query = model.encode([query]).astype(np.float32)
-    # search the index for similar vectors
-    distances, ind = index.search(query, 3)
-    # get the most similar chunks
+    # embeddings = np.array(model.encode(corrected_chunks)).astype(np.float32)
+    # # Index creation
+    # index = faiss.IndexFlatL2(embeddings.shape[1])
+    # # add embeddings to index
+    # index.add(embeddings)
+    # # Vector query
+    # query = model.encode([query]).astype(np.float32)
+    # # search the index for similar vectors
+    # distances, ind = index.search(query, 3)
+    # # get the most similar chunks
     context = ""
-    for i in ind[0]:
-        context += "\n" + corrected_chunks[i]
-
+    # for i in ind[0]:
+    #     context += "\n" + corrected_chunks[i]
+    
     
     query_template = """ You are a document reader, you will be given a text and a query. Your task is to answer the query based on the text.
 
