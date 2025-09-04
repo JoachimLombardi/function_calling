@@ -1,5 +1,5 @@
 # Django
-Django==5.2.1
+Django==5.2.6
 django-cors-headers==4.7.0
 django-environ==0.12.0
 
