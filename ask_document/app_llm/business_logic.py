@@ -704,7 +704,8 @@ def reorder_text_pdf(_context_, list_path, model, query):
             encoded = tokenizer(chunk, return_tensors="pt", truncation=False, max_length=1000)
             with torch.no_grad():
                 output = model(**encoded)
-                embeddings.append(output[0][0].numpy())
+                chunk_embedding = output.last_hidden_state.mean(dim=1)  # moyenne des tokens
+                embeddings.append(chunk_embedding.cpu().numpy().astype("float32"))
     print("=================================================================\n embeddings", embeddings)
     # Index creation
     index = faiss.IndexFlatL2(embeddings.shape[1])
