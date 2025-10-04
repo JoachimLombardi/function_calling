@@ -14,6 +14,8 @@ from openai import OpenAI
 import requests
 import fitz
 from PIL import Image
+import torch
+from transformers import AutoModel, AutoTokenizer
 from ask_document.config import MEDIA_ROOT
 import pandas as pd
 from sklearn.compose import ColumnTransformer
@@ -636,7 +638,9 @@ def reorder_text_pdf(_context_, list_path, model, query):
         """
         for attempt in range(3):
             try:
+                print("payload", payload)
                 response = call_fn(payload)
+                print("response", response)
                 return get_message(response)
             except Exception as e:
                 print(f"Api call failed with error: {e} - attempt {attempt + 1}/{3} - retrying...")
@@ -658,9 +662,10 @@ def reorder_text_pdf(_context_, list_path, model, query):
         Returns:
             str: The corrected version of the text, or an empty string if the API call fails.
         """
-        print("DEBUG chunk:", chunk)
         messages = [{"role":"user", "content": proofread_template + "\n\n" + chunk, "images": [image]}]
+        print("=================================================================\n messages", messages[0]["content"])
         corrected_chunk = api_call(payload(messages))
+        print("=================================================================\n corrected_chunk", corrected_chunk)
         if not corrected_chunk:
             return ""
         try:
@@ -671,6 +676,12 @@ def reorder_text_pdf(_context_, list_path, model, query):
             pass
         corrected_chunk = corrected_chunk.replace("\n", " ").replace("\u202f", " ").strip()
         return corrected_chunk
+    
+    def tokens(text):
+        tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
+        encoded = tokenizer(text, return_tensors="pt", truncation=False)
+        tokens = tokenizer.convert_ids_to_tokens(encoded["input_ids"][0])
+        return [" ".join(tokens[i:i + 1000]) for i in range(0, len(tokens), 1000)], len(tokens)
      
      
     # Chunking and correction
@@ -679,11 +690,22 @@ def reorder_text_pdf(_context_, list_path, model, query):
     for page, image in zip(_context_, list_b64):
         if len(page.split()) > 1000:
             for chunk in chunk_text(page):
+                print("=================================================================\n chunk", chunk)
                 corrected_chunks.append(correct_chunk(chunk, image))
         else:
             corrected_chunks.append(correct_chunk(page, image))
+    print("=================================================================\n corrected_chunks", corrected_chunks)
     # Vectorization
-    embeddings = np.array(model.encode(corrected_chunks)).astype(np.float32)
+    embeddings = []
+    tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
+    model = AutoModel.from_pretrained("bert-base-uncased")
+    for chunk in corrected_chunks:
+        if chunk:
+            encoded = tokenizer(chunk, return_tensors="pt", truncation=False, max_length=1000)
+            with torch.no_grad():
+                output = model(**encoded)
+            embeddings.append(output[0][0].numpy())
+    print("=================================================================\n embeddings", embeddings)
     # Index creation
     index = faiss.IndexFlatL2(embeddings.shape[1])
     # add embeddings to index
@@ -697,6 +719,7 @@ def reorder_text_pdf(_context_, list_path, model, query):
     for i in ind[0]:
         context += "\n" + corrected_chunks[i]
     
+    print("=================================================================\n context", context)
     
     query_template = """ You are a document reader, you will be given a text and a query. Your task is to answer the query based on the text.
 
