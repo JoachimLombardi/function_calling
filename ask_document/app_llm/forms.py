@@ -14,6 +14,7 @@ class FunctionCallingForm(forms.Form):
     llm_choice = forms.ChoiceField(choices=LLM_CHOICE, label="Choisissez un llm", 
                                    widget=forms.Select(attrs={'class': 'form-select'}), 
                                    required=True)
+    web_search = forms.BooleanField(label="Rechercher sur internet", required=False)
     
 
 class ImageUploadForm(FunctionCallingForm):

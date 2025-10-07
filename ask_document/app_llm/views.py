@@ -38,7 +38,8 @@ def llm_choice(request):
         if form.is_valid():
             query = form.cleaned_data.get('query')
             llm_choice = form.cleaned_data.get('llm_choice')
-            response, context, mails = function_calling(query, llm_choice)
+            web_search = form.cleaned_data.get('web_search')
+            response, context, mails = function_calling(query, llm_choice, web_search)
             if "error" in response:
                 messages.error(request, response["error"])
                 response = ""

@@ -31,6 +31,7 @@ import joblib
 import numpy as np
 from django.conf import settings
 import faiss
+from ollama import chat, web_fetch, web_search
 
 
 def image_questioning_llm(llm_choice, query, path="data/jpg/image.jpg"):
@@ -58,7 +59,7 @@ def image_questioning_llm(llm_choice, query, path="data/jpg/image.jpg"):
     return response["message"]["content"]
 
 
-def function_calling(query, model):
+def function_calling(query, model, is_web_search):
     """
     This function is used to interact with the Ollama Chat API to ask questions about emails and car prices.
     It takes in two parameters:
@@ -368,6 +369,8 @@ def function_calling(query, model):
         X_test = pd.DataFrame({"Make": [make], "Colour": [color], "Odometer (KM)": [odometer], "Doors": [float(doors)]})
         y_pred = str(int(round(model.predict(X_test)[0])))
         return f"The predicted price is {y_pred} dollars"
+    
+        
     # List of tools
     tools = [
         {
@@ -429,13 +432,15 @@ def function_calling(query, model):
                 "required": ["make", "color", "odometer", "doors"]
                 }
             }
-        }
+        },
     ]
     # Dictionary of functions
     names_to_functions = {
         "google_mail": functools.partial(google_mail),
         "create_best_model": functools.partial(create_best_model, data),
-        "make_predictions": functools.partial(make_predictions)
+        "make_predictions": functools.partial(make_predictions),
+        "web_search": functools.partial(web_search),
+        "web_fetch": functools.partial(web_fetch)
     }
     
     def build_messages(query):
@@ -507,21 +512,37 @@ def function_calling(query, model):
                 "seed": 42
             }
 
+
     # Function calling
     for attempt in range(1,4):
         # --- Sélection back-end (Ollama vs HF) ---
         try:
-            if settings.IS_RENDER:
-                print("api huggingface call")
+            if is_web_search:
+                print("api ollama web_search call")
+                os.environ["OLLAMA_API_KEY"] = settings.OLLAMA_API_KEY
+                data = {
+                    "model": model,
+                    "messages": messages,
+                    "stream": False,
+                    "tools": [web_search, web_fetch],
+                    "think": True,
+                }
+                call_fn = lambda d: chat(**d)
+                get_message = lambda resp: resp.message
+                add_tool_msg = lambda _id, fn, res: {
+                    "role": "tool", "tool_name": fn, "content": res
+                }
+            elif settings.IS_RENDER:
+                print("api huggingface llm call")
                 client = OpenAI(base_url="https://router.huggingface.co/v1",
                                 api_key=settings.HUGGINGFACE_API_KEY)
-                call_fn = lambda d: client.chat.completions.create(**d)
+                call_fn = lambda d: client.chat.completions.create(**d) 
                 get_message = lambda resp: resp.choices[0].message
                 add_tool_msg = lambda tool_call_id, fn, res: {
                     "tool_call_id": tool_call_id, "role": "tool", "name": fn, "content": res
                 }
             else:
-                print("api ollama call")
+                print("api ollama llm call")
                 call_fn = lambda d: requests.post('http://localhost:11434/api/chat', json=d).json()
                 get_message = lambda resp: resp["message"]
                 add_tool_msg = lambda _id, fn, res: {
@@ -534,19 +555,22 @@ def function_calling(query, model):
             messages.append(first_message)
 
             # Extraction tool
-            tool_call = first_message.tool_calls[0] if settings.IS_RENDER else first_message["tool_calls"][0]
+            tool_call = first_message.tool_calls[0] if hasattr(first_message, "tool_calls") else first_message.get("tool_calls")[0] 
             function_name, params = extract_tool_call(tool_call)
             print("function_name:", function_name, "params:", params)
 
             # Exécution tool
             tool_result, context, mails = execute_tool(function_name, params)
+            if function_name == "web_search":
+                tool_result = str(tool_result)[:8000]
             tool_msg = add_tool_msg(getattr(tool_call, "id", None), function_name, tool_result)
             messages.append(tool_msg)
 
             # Deuxième appel
             data = {"model": model, "messages": messages, "stream": False}
+            print(data["messages"])
             response = call_fn(data)
-            final_content = (get_message(response).content if settings.IS_RENDER else get_message(response)["content"])
+            final_content = (get_message(response).content if hasattr(get_message(response), "content") else get_message(response).get("content"))
             return final_content, context, mails
         except Exception as e:
             print(f"Attempt {attempt}/3 \n API call failed with error: {e} - retrying...")

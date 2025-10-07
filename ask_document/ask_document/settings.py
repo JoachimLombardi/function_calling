@@ -28,6 +28,8 @@ IS_RENDER = env.bool('IS_RENDER')
 
 HUGGINGFACE_API_KEY = env.str('HUGGINGFACE_API_KEY')
 
+OLLAMA_API_KEY = env.str('OLLAMA_API_KEY')
+
 # Application definition
 
 INSTALLED_APPS = [
