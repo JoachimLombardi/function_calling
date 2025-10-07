@@ -591,7 +591,7 @@ def reorder_text_pdf(_context_, list_path, model, query):
     }
     """
     
-    def chunk_text(text, chunk_size=1000):
+    def chunk_text(text, chunk_size=350):
         return textwrap.wrap(text, chunk_size)
 
 
@@ -680,7 +680,7 @@ def reorder_text_pdf(_context_, list_path, model, query):
     # Chunking and correction
     corrected_chunks = []
     for page, image in zip(_context_, list_b64):
-        if len(page.split()) > 1000:
+        if len(page.split()) > 350:
             for chunk in chunk_text(page):
                 corrected_chunks.append(correct_chunk(chunk, image))
         else:
