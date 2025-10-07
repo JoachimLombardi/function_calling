@@ -30,7 +30,6 @@ from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error, r
 import joblib
 import numpy as np
 from django.conf import settings
-from sentence_transformers import SentenceTransformer
 import faiss
 
 
@@ -676,36 +675,36 @@ def reorder_text_pdf(_context_, list_path, model, query):
             pass
         corrected_chunk = corrected_chunk.replace("\n", " ").replace("\u202f", " ").strip()
         return corrected_chunk
+     
     
-    def tokens(text):
-        tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
-        encoded = tokenizer(text, return_tensors="pt", truncation=False)
-        tokens = tokenizer.convert_ids_to_tokens(encoded["input_ids"][0])
-        return [" ".join(tokens[i:i + 1000]) for i in range(0, len(tokens), 1000)], len(tokens)
-     
-     
     # Chunking and correction
     corrected_chunks = []
-    model = SentenceTransformer('bert-base-nli-mean-tokens')
     for page, image in zip(_context_, list_b64):
         if len(page.split()) > 1000:
             for chunk in chunk_text(page):
-                print("=================================================================\n chunk", chunk)
                 corrected_chunks.append(correct_chunk(chunk, image))
         else:
             corrected_chunks.append(correct_chunk(page, image))
     print("=================================================================\n corrected_chunks", corrected_chunks)
     # Vectorization
-    embeddings = []
+    # Initialisation of the vectorizer and model once
     tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
     model = AutoModel.from_pretrained("bert-base-uncased")
+    model.eval()  # desactivate dropout
+    embeddings = []
     for chunk in corrected_chunks:
-        if chunk:
-            encoded = tokenizer(chunk, return_tensors="pt", truncation=False, max_length=1000)
-            with torch.no_grad():
-                output = model(**encoded)
-                chunk_embedding = output.last_hidden_state.mean(dim=1)  # moyenne des tokens
-                embeddings.append(chunk_embedding.cpu().numpy().astype("float32"))
+        if not chunk.strip():
+            continue  # ignore empty chunks
+        # encoding at 512 tokens to avoid OOM
+        encoded = tokenizer(chunk, return_tensors="pt", truncation=True, max_length=512)
+        with torch.no_grad():
+            output = model(**encoded)
+            # Mean of tokens' vectors (pooled)
+            chunk_embedding = output.last_hidden_state.mean(dim=1).squeeze(0)
+        embeddings.append(chunk_embedding.cpu().numpy().astype("float32"))
+    # Free memory
+    del encoded, output, chunk_embedding
+    torch.cuda.empty_cache() if torch.cuda.is_available() else None
     print("=================================================================\n embeddings", embeddings)
     # Index creation
     index = faiss.IndexFlatL2(embeddings.shape[1])
