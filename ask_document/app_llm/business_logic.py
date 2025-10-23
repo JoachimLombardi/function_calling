@@ -1,6 +1,5 @@
 import base64
 import functools
-import inspect
 import json
 import os
 from pathlib import Path
@@ -19,6 +18,7 @@ import fitz
 from PIL import Image
 import torch
 from transformers import AutoModel, AutoTokenizer
+from .utils import detect_func_signature
 from ask_document.config import MEDIA_ROOT
 import pandas as pd
 from sklearn.compose import ColumnTransformer
@@ -34,7 +34,7 @@ import joblib
 import numpy as np
 from django.conf import settings
 import faiss
-from ollama import chat, web_fetch, web_search
+from ollama import chat, web_fetch
 
 
 def image_questioning_llm(llm_choice, query, path="data/jpg/image.jpg"):
@@ -498,31 +498,6 @@ def function_calling(query, model):
         "web_fetch": functools.partial(web_fetch)
     }
     
-    
-    def detect_func_signature(func, params):
-        """
-        Detects the signature of the given function and calls it with the given parameters accordingly.
-
-        If the function takes only one argument, it will be called with the given parameters as a single argument.
-        If the function takes more than one argument, it will be called with the given parameters as keyword arguments.
-
-        Parameters:
-            func (function): The function to call.
-            params (dict): The parameters to pass to the function.
-
-        Returns:
-            The result of the function call.
-        """
-        sig = inspect.signature(func)
-        param_count = len(sig.parameters)
-
-        if param_count == 1:
-            # Function is called with a single argument 
-            return func(params)
-        else:
-            # Function is called with keyword arguments
-            return func(**params)
-
 
     def build_messages(query):
         """

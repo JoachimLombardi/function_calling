@@ -1,5 +1,4 @@
 from pathlib import Path
-from django.conf import settings
 from django.shortcuts import render
 from ask_document.config import MEDIA_ROOT, MEDIA_URL
 from .utils import save_file
