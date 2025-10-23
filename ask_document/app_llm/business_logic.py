@@ -1,9 +1,12 @@
 import base64
 import functools
+import inspect
 import json
 import os
 from pathlib import Path
+import re
 import textwrap
+from typing import Any, Dict
 from ollama import chat
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -59,7 +62,7 @@ def image_questioning_llm(llm_choice, query, path="data/jpg/image.jpg"):
     return response["message"]["content"]
 
 
-def function_calling(query, model, is_web_search):
+def function_calling(query, model):
     """
     This function is used to interact with the Ollama Chat API to ask questions about emails and car prices.
     It takes in two parameters:
@@ -370,7 +373,35 @@ def function_calling(query, model, is_web_search):
         y_pred = str(int(round(model.predict(X_test)[0])))
         return f"The predicted price is {y_pred} dollars"
     
+    
+    def web_search(payload: Dict[str, int]) -> Dict[str, Any]:
+        """
+        Performs a web search using the Ollama API.
+        Args:
+            payload: A dictionary with the following structure:
+                {
+                    "q": str,  # The search query
+                    "num_results": int,  # The number of results to return
+                }
+        Returns:
+            A dictionary with the following structure:
+                {
+                    "results": List[Dict[str, Any]],  # A list of search results
+                }
+        Raises:
+            ValueError: If the OLLAMA_API_KEY environment variable is not set
+            RuntimeError: If the web search fails
+        """
+        print("api ollama web_search call")
+        api_key = settings.OLLAMA_API_KEY
+        headers = {"Authorization": f"Bearer {api_key}"}
+        url = "https://ollama.com/api/web_search"
+        response = requests.post(url, headers=headers, json=payload)
+        if response.status_code != 200:
+            raise RuntimeError(f"Web search failed ({response.status_code}): {response.text}")
+        return response.json()
         
+
     # List of tools
     tools = [
         {
@@ -433,6 +464,30 @@ def function_calling(query, model, is_web_search):
                 }
             }
         },
+
+        {
+            "type": "function",
+            "function":{
+            "name": "web_search",
+            "description": "Use this function to search the internet for the latest news, people, events, or any topic that changes over time. "
+            "Always use it when the user asks about recent events.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The query to search for",
+                        },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "The maximum number of results to return (default: 3)",
+                        "default": 3
+                        }
+                    },
+                "required": ["query"]
+                }
+            }
+        },
     ]
     # Dictionary of functions
     names_to_functions = {
@@ -443,20 +498,46 @@ def function_calling(query, model, is_web_search):
         "web_fetch": functools.partial(web_fetch)
     }
     
+    
+    def detect_func_signature(func, params):
+        """
+        Detects the signature of the given function and calls it with the given parameters accordingly.
+
+        If the function takes only one argument, it will be called with the given parameters as a single argument.
+        If the function takes more than one argument, it will be called with the given parameters as keyword arguments.
+
+        Parameters:
+            func (function): The function to call.
+            params (dict): The parameters to pass to the function.
+
+        Returns:
+            The result of the function call.
+        """
+        sig = inspect.signature(func)
+        param_count = len(sig.parameters)
+
+        if param_count == 1:
+            # Function is called with a single argument 
+            return func(params)
+        else:
+            # Function is called with keyword arguments
+            return func(**params)
+
+
     def build_messages(query):
-            """
-            Build the messages to be used in the conversation.
+        """
+        Build the messages to be used in the conversation.
 
-            Args:
-                query (str): The query of the user.
+        Args:
+            query (str): The query of the user.
 
-            Returns:
-                list: A list of messages to be used in the conversation.
-            """
-            return [
-            {"role": "system", "content": "Tu es un assistant expert. Utilise uniquement la sortie des fonctions tools pour répondre."},
-            {"role": "user", "content": query}
-            ]
+        Returns:
+            list: A list of messages to be used in the conversation.
+        """
+        return [
+        {"role": "system", "content": "Tu es un assistant expert. Utilise uniquement la sortie des fonctions tools pour répondre."},
+        {"role": "user", "content": query}
+        ]
 
 
     def extract_tool_call(tool_call):
@@ -469,8 +550,8 @@ def function_calling(query, model, is_web_search):
         Returns:
             tuple: A tuple containing the function name and its arguments.
         """
-        function_name = getattr(tool_call["function"], "name", None) if isinstance(tool_call, dict) else tool_call.function.name
-        args = getattr(tool_call["function"], "arguments", None) if isinstance(tool_call, dict) else tool_call.function.arguments
+        function_name = tool_call["function"].get("name", None) if isinstance(tool_call, dict) else getattr(tool_call.function, "name", None)
+        args = tool_call["function"].get("arguments", None) if isinstance(tool_call, dict) else getattr(tool_call.function, "arguments", None)
         try:
             params = json.loads(args)
         except:
@@ -489,7 +570,7 @@ def function_calling(query, model, is_web_search):
         Returns:
             tuple: A tuple containing the result of the tool function, the context and the mails.
         """
-        result = names_to_functions[function_name](**params)
+        result = detect_func_signature(names_to_functions[function_name], params)
         mails = []
         context = result
         if function_name == "google_mail":
@@ -498,6 +579,7 @@ def function_calling(query, model, is_web_search):
         if isinstance(result, dict):
             result = json.dumps(result)
         return result, context, mails
+
     
     messages = build_messages(query)
 
@@ -517,22 +599,7 @@ def function_calling(query, model, is_web_search):
     for attempt in range(1,4):
         # --- Sélection back-end (Ollama vs HF) ---
         try:
-            if is_web_search:
-                print("api ollama web_search call")
-                os.environ["OLLAMA_API_KEY"] = settings.OLLAMA_API_KEY
-                data = {
-                    "model": model,
-                    "messages": messages,
-                    "stream": False,
-                    "tools": [web_search, web_fetch],
-                    "think": True,
-                }
-                call_fn = lambda d: chat(**d)
-                get_message = lambda resp: resp.message
-                add_tool_msg = lambda _id, fn, res: {
-                    "role": "tool", "tool_name": fn, "content": res
-                }
-            elif settings.IS_RENDER:
+            if settings.IS_RENDER:
                 print("api huggingface llm call")
                 client = OpenAI(base_url="https://router.huggingface.co/v1",
                                 api_key=settings.HUGGINGFACE_API_KEY)
@@ -571,6 +638,13 @@ def function_calling(query, model, is_web_search):
             print(data["messages"])
             response = call_fn(data)
             final_content = (get_message(response).content if hasattr(get_message(response), "content") else get_message(response).get("content"))
+            if function_name == "web_search":
+                final_content = re.sub(r'\|.*?\|', '', final_content).replace("|", "").replace("-", "")
+                articles = context["results"]
+                context = ""
+                for article in articles:
+                    context += f"<p><strong>{article['title']}</strong><br><br><em>{article['url']}</em><br><br>{article['content']}</p><br><br><br>"
+                    context = re.sub(r'Read more.*$', '', context, flags=re.DOTALL)
             return final_content, context, mails
         except Exception as e:
             print(f"Attempt {attempt}/3 \n API call failed with error: {e} - retrying...")
