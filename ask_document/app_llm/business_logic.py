@@ -6,7 +6,6 @@ from pathlib import Path
 import re
 import textwrap
 from typing import Any, Dict
-from ollama import chat
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
@@ -162,6 +161,7 @@ def function_calling(query, model):
 
     data = pd.read_csv("data/csv/car-sales-extended-missing-data.csv")
 
+
     def create_best_model(data):  
         """
         Create the best model based on the given data.
@@ -215,13 +215,11 @@ def function_calling(query, model):
         "max_iter": [1000],
         }
 
-
         rf_reg_grid = {
         "n_estimators": [100, 400],
         "min_samples_split": [2],
         "min_samples_leaf": [1, 5],
         }
-
 
         SGD_reg_grid = {
         "loss": ["squared_error"],
@@ -374,28 +372,22 @@ def function_calling(query, model):
         return f"The predicted price is {y_pred} dollars"
     
     
-    def web_search(payload: Dict[str, int]) -> Dict[str, Any]:
+    def web(payload: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Performs a web search using the Ollama API.
+        Makes a web search using the Ollama API.
         Args:
-            payload: A dictionary with the following structure:
-                {
-                    "q": str,  # The search query
-                    "num_results": int,  # The number of results to return
-                }
+            payload (Dict[str, Any]): A dictionary containing the mode, query, and max_results.
         Returns:
-            A dictionary with the following structure:
-                {
-                    "results": List[Dict[str, Any]],  # A list of search results
-                }
+            Dict[str, Any]: The response from the Ollama API as a JSON object.
         Raises:
-            ValueError: If the OLLAMA_API_KEY environment variable is not set
-            RuntimeError: If the web search fails
+            RuntimeError: If the web search fails.
         """
-        print("api ollama web_search call")
-        api_key = settings.OLLAMA_API_KEY
+        mode = payload.get("mode")
+        print(f"api ollama {mode} call")
+        api_key = getattr(settings, "OLLAMA_API_KEY")
         headers = {"Authorization": f"Bearer {api_key}"}
-        url = "https://ollama.com/api/web_search"
+        url = f"https://ollama.com/api/{mode}"
+        payload = {k: v for k, v in payload.items() if k != "mode"}
         response = requests.post(url, headers=headers, json=payload)
         if response.status_code != 200:
             raise RuntimeError(f"Web search failed ({response.status_code}): {response.text}")
@@ -468,23 +460,30 @@ def function_calling(query, model):
         {
             "type": "function",
             "function":{
-            "name": "web_search",
-            "description": "Use this function to search the internet for the latest news, people, events, or any topic that changes over time. "
-            "Always use it when the user asks about recent events.",
+            "name": "web",
+            "description": ("Use this function to access the web. "
+            "For the latest news, people, events, or any topic that changes over time, set mode='web_search'. "
+            "If the query looks like a URL or refers to a specific page, set mode='web_fetch'."),
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "mode": {
+                        "type": "string",
+                        "enum": ["web_search", "web_fetch"],
+                        "description": ("Select 'web_search' to search the internet for recent or general information, "
+                        "or 'web_fetch' to fetch the content of a specific web page."),
+                        },
                     "query": {
                         "type": "string",
-                        "description": "The query to search for",
+                        "description": "The query to search for or URL to fetch.",
                         },
                     "max_results": {
                         "type": "integer",
-                        "description": "The maximum number of results to return (default: 3)",
+                        "description": "The maximum number of results to return (default: 3). Only used when mode='web_search'.",
                         "default": 3
                         }
                     },
-                "required": ["query"]
+                "required": ["query", "mode"]
                 }
             }
         },
@@ -494,8 +493,7 @@ def function_calling(query, model):
         "google_mail": functools.partial(google_mail),
         "create_best_model": functools.partial(create_best_model, data),
         "make_predictions": functools.partial(make_predictions),
-        "web_search": functools.partial(web_search),
-        "web_fetch": functools.partial(web_fetch)
+        "web": functools.partial(web),
     }
     
 
@@ -603,17 +601,17 @@ def function_calling(query, model):
 
             # Exécution tool
             tool_result, context, mails = execute_tool(function_name, params)
-            if function_name == "web_search":
-                tool_result = str(tool_result)[:8000]
+            if function_name == "web":
+                tool_result = str(tool_result)[:1000]
             tool_msg = add_tool_msg(getattr(tool_call, "id", None), function_name, tool_result)
             messages.append(tool_msg)
 
             # Deuxième appel
             data = {"model": model, "messages": messages, "stream": False}
-            print(data["messages"])
+            print("data:", data)
             response = call_fn(data)
             final_content = (get_message(response).content if hasattr(get_message(response), "content") else get_message(response).get("content"))
-            if function_name == "web_search":
+            if function_name == "web":
                 final_content = re.sub(r'\|.*?\|', '', final_content).replace("|", "").replace("-", "")
                 articles = context["results"]
                 context = ""
